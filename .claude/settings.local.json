@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(pip install:*)",
+      "Bash(py --list)",
+      "Bash(py -3.12 -m pip install .)",
+      "Bash(py:*)",
+      "Bash(npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(langgraph assistants:*)",
+      "Bash(langgraph dev:*)",
+      "WebSearch"
+    ],
+    "deny": [],
+    "ask": [],
+    "additionalDirectories": [
+      "D:\\Workspace\\open_deep_research"
+    ]
+  }
+}

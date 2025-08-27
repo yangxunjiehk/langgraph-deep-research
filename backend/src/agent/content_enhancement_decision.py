@@ -5,7 +5,7 @@
 import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import AzureChatOpenAI
 from langchain_core.runnables import RunnableConfig
 from firecrawl import FirecrawlApp
 
@@ -49,11 +49,13 @@ class ContentEnhancementDecisionMaker:
         from agent.configuration import Configuration
         configurable = Configuration.from_runnable_config(config)
         
-        llm = ChatGoogleGenerativeAI(
-            model=configurable.reflection_model,  # 使用和reflection相同的模型
+        llm = AzureChatOpenAI(
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+            openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             temperature=0.3,  # 低温度确保一致性
             max_retries=2,
-            api_key=os.getenv("GEMINI_API_KEY"),
         )
         
         response = llm.invoke(analysis_prompt)

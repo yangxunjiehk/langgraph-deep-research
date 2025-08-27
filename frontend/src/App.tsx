@@ -35,19 +35,33 @@ export default function App() {
     reasoning_model: string;
   }>({
     apiUrl: import.meta.env.DEV
-      ? "http://localhost:2024"
+      ? "http://127.0.0.1:2024"
       : "http://localhost:8123",
-    assistantId: "agent",
+    assistantId: "Deep Researcher Flat", // 使用新的扁平图
     messagesKey: "messages",
+    streamSubgraphs: true, // 启用子图流式传输以接收嵌套图事件
     onFinish: (state) => {
       console.log(state);
     },
     onUpdateEvent: (event: StreamEvent) => {
       // 🐛 DEBUG: 完整事件日志
       console.log("📨 收到事件:", event);
+      
+      // 🔧 NEW: 检查是否为子图事件
+      const isSubgraphEvent = event.namespace || event.ns;
+      if (isSubgraphEvent) {
+        console.log("📊 子图事件详情:", {
+          namespace: event.namespace || event.ns,
+          eventKeys: Object.keys(event),
+          event: event
+        });
+      }
+      
       console.log("📊 事件结构分析:", {
         eventKeys: Object.keys(event),
         eventType: typeof event,
+        isSubgraphEvent: isSubgraphEvent,
+        namespace: event.namespace || event.ns || "main",
         hasGenerateQuery: !!event.generate_query,
         hasWebResearch: !!event.web_research,
         hasReflection: !!event.reflection,
@@ -77,130 +91,300 @@ export default function App() {
       
       let processedEvent: ProcessedEvent | null = null;
       let eventProcessed = false;
-      if (event.generate_query) {
-        const queryData = event.generate_query as { query_list?: string[] };
+      
+      // 🔧 NEW: 处理子图事件（带namespace的事件）
+      if (isSubgraphEvent) {
+        const namespace = event.namespace || event.ns || "";
+        console.log("🎯 处理子图事件, namespace:", namespace);
+        
+        // 检查是否为researcher子图的事件
+        if (namespace.includes("researcher") || namespace.includes("supervisor")) {
+          // 提取子图中的具体节点名称
+          const nodeNames = Object.keys(event).filter(key => 
+            !['namespace', 'ns', 'metadata', 'tags'].includes(key)
+          );
+          
+          console.log("📍 子图节点:", nodeNames);
+          
+          // 处理researcher_tools节点（这是tavily搜索所在的节点）
+          if (event.researcher_tools || nodeNames.includes('researcher_tools')) {
+            processedEvent = {
+              title: "🔍 Tavily Search",
+              data: "Executing web searches and gathering information...",
+            };
+            eventProcessed = true;
+            console.log("✅ 检测到researcher_tools子图事件！");
+          } else if (event.researcher || nodeNames.includes('researcher')) {
+            processedEvent = {
+              title: "Research Planning (Subgraph)",
+              data: "Planning research approach in subgraph...",
+            };
+            eventProcessed = true;
+          } else if (event.compress_research || nodeNames.includes('compress_research')) {
+            processedEvent = {
+              title: "Compressing Research (Subgraph)",
+              data: "Summarizing research findings in subgraph...",
+            };
+            eventProcessed = true;
+          }
+        }
+      }
+      
+      // 🔧 新增: 支持扁平图的事件结构
+      if (!eventProcessed && event.clarify_with_user) {
         processedEvent = {
-          title: "Generating Search Queries",
-          data: queryData.query_list?.join(", ") || "No queries",
+          title: "Clarifying Requirements",
+          data: "Analyzing user request and determining if clarification is needed...",
         };
         eventProcessed = true;
-      } else if (event.web_research) {
-        // 🐛 DEBUG: 详细记录web_research事件结构
-        console.log("🔍 Web Research 事件详细信息:", event.web_research);
+      } else if (event.write_research_brief) {
+        processedEvent = {
+          title: "Writing Research Brief",
+          data: "Creating detailed research brief and planning strategy...",
+        };
+        eventProcessed = true;
+      } else if (event.plan_research) {
+        processedEvent = {
+          title: "Planning Research",
+          data: "Analyzing research requirements and creating execution plan...",
+        };
+        eventProcessed = true;
+      } else if (event.execute_research_tools) {
+        processedEvent = {
+          title: "Preparing Research Tools",
+          data: "Setting up research tools and validation parameters...",
+        };
+        eventProcessed = true;
+      } else if (event.perform_searches) {
+        processedEvent = {
+          title: "🔍 Performing Web Searches",
+          data: "Executing Tavily searches and gathering information from web sources...",
+        };
+        eventProcessed = true;
+        console.log("✅ 检测到perform_searches节点事件 - Tavily搜索执行中！");
+      } else if (event.analyze_search_results) {
+        processedEvent = {
+          title: "📊 Analyzing Search Results",
+          data: "Processing and summarizing collected research information...",
+        };
+        eventProcessed = true;
+      } else if (event.supervisor) {
+        processedEvent = {
+          title: "Research Supervision",
+          data: "Coordinating research activities and monitoring progress...",
+        };
+        eventProcessed = true;
+      } else if (event.supervisor_tools) {
+        processedEvent = {
+          title: "Supervisor Analysis",
+          data: "Evaluating research progress and determining next steps...",
+        };
+        eventProcessed = true;
+      } else if (event.researcher) {
+        processedEvent = {
+          title: "Research Planning",
+          data: "Planning detailed research approach and generating search queries...",
+        };
+        eventProcessed = true;
+      } else if (event.researcher_tools) {
+        // 检查是否有工具调用的详细信息
+        console.log("🔍 Researcher Tools 事件详细信息:", event.researcher_tools);
         
-        const researchData = event.web_research as { sources_gathered?: SourceData[] };
-        const sources = researchData.sources_gathered || [];
-        const numSources = sources.length;
+        // 尝试从事件中提取更具体的信息
+        const toolsData = event.researcher_tools as any;
+        let detailedInfo = "Executing research operations...";
+        let title = "Conducting Research";
         
-        // 🐛 DEBUG: 记录来源结构
-        if (sources.length > 0) {
-          console.log("📊 第一个来源的结构:", sources[0]);
-          console.log("📊 所有来源的keys:", sources.map(s => Object.keys(s)));
+        // 检查是否包含搜索查询信息
+        if (toolsData && typeof toolsData === 'object') {
+          if (toolsData.search_queries || toolsData.query || toolsData.tavily_search) {
+            title = "Web Search";
+            detailedInfo = "Performing Tavily web searches and gathering information...";
+          } else if (toolsData.summary || toolsData.summarize || toolsData.analysis) {
+            title = "Content Analysis";
+            detailedInfo = "Analyzing and summarizing collected research data...";
+          } else if (toolsData.tools_called || toolsData.tool_calls) {
+            title = "Research Tools";
+            detailedInfo = "Executing research tools and processing results...";
+          }
         }
         
-        const uniqueLabels = [
-          ...new Set(sources.map((s: SourceData) => s.label).filter(Boolean)),
-        ];
-        const exampleLabels = uniqueLabels.slice(0, 3).join(", ");
         processedEvent = {
-          title: "Web Research",
-          data: `Gathered ${numSources} sources. Related to: ${
-            exampleLabels || "N/A"
-          }.`,
+          title,
+          data: detailedInfo,
         };
         eventProcessed = true;
-      } else if (event.reflection) {
-        // 🐛 DEBUG: 详细记录reflection事件结构
-        console.log("🤔 Reflection 事件详细信息:", event.reflection);
+      } else if (event.tool_execution_details) {
+        // 🔧 NEW: 处理工具执行详情事件 - 支持实时状态更新
+        console.log("🔧 Tool Execution Details 事件详细信息:", event.tool_execution_details);
         
-        const reflectionData = event.reflection as {
-          reflection_is_sufficient?: boolean;
-          reflection_follow_up_queries?: string[];
-        };
-        processedEvent = {
-          title: "Reflection",
-          data: reflectionData.reflection_is_sufficient
-            ? "Search successful, generating final answer."
-            : `Need more information, searching for ${(reflectionData.reflection_follow_up_queries || []).join(
-                ", "
-              )}`,
-        };
-        eventProcessed = true;
-      } else if (event.planner_node || event.planner) {
-        const plannerData = (event.planner_node || event.planner) as { plan?: unknown[] };
-        processedEvent = {
-          title: "Planning Research Strategy",
-          data: plannerData.plan 
-            ? `Generated ${plannerData.plan.length} research tasks`
-            : "Analyzing research requirements...",
-        };
-        eventProcessed = true;
-      } else if (event.content_enhancement_analysis) {
-        const enhancementData = event.content_enhancement_analysis as {
-          needs_enhancement?: boolean;
-          reasoning?: string;
-        };
-        processedEvent = {
-          title: "Content Enhancement Analysis",
-          data: enhancementData.needs_enhancement
-            ? `Enhancement needed: ${enhancementData.reasoning || 'Analyzing content quality'}`
-            : "Content quality sufficient, proceeding with report generation",
-        };
-        eventProcessed = true;
-      } else if (event.evaluate_research_enhanced) {
-        const evaluationData = event.evaluate_research_enhanced as {
-          evaluation_is_sufficient?: boolean;
-        };
-        processedEvent = {
-          title: "Research Quality Evaluation",
-          data: evaluationData.evaluation_is_sufficient
-            ? "Research meets quality standards"
-            : "Additional research required",
-        };
-        eventProcessed = true;
-      } else if (event.content_enhancement) {
-        // 🐛 DEBUG: 详细记录content enhancement事件结构
-        console.log("🔧 Content Enhancement 事件详细信息:", event.content_enhancement);
+        const detailsArray = event.tool_execution_details as Array<{
+          tool_name?: string;
+          tool_index?: number;
+          total_tools?: number;
+          status?: string;
+          args?: any;
+          result_length?: number;
+          timestamp?: string;
+        }>;
         
-        const enhancementData = event.content_enhancement as {
-          enhancement_status?: string;
-        };
-        const enhancementStatus = enhancementData.enhancement_status || "unknown";
-        const statusMessages: Record<string, string> = {
-          "skipped": "Content enhancement skipped - quality sufficient",
-          "completed": "Content enhancement completed successfully", 
-          "failed": "Content enhancement failed",
-          "error": "Content enhancement encountered errors",
-          "analyzing": "Analyzing content enhancement needs",
-          "skipped_no_api": "Content enhancement skipped - no API key"
-        };
+        // 使用最后一个工具的信息创建事件
+        if (detailsArray && detailsArray.length > 0) {
+          const currentTool = detailsArray[detailsArray.length - 1];
+          const toolName = currentTool.tool_name || "Unknown Tool";
+          const index = currentTool.tool_index || 1;
+          const total = currentTool.total_tools || 1;
+          const status = currentTool.status || "unknown";
+          
+          let title = `工具执行状态`;
+          let data = ``;
+          
+          // 根据状态显示不同的信息
+          if (status === "starting") {
+            if (toolName === "tavily_search") {
+              title = `Tavily 搜索`;
+              data = `🔄 正在执行网络搜索... (${index}/${total})`;
+            } else if (toolName === "tavily_summarize") {
+              title = `内容摘要`;
+              data = `🔄 正在生成内容摘要... (${index}/${total})`;
+            } else {
+              title = `${toolName}`;
+              data = `🔄 进行中... (${index}/${total})`;
+            }
+          } else if (status === "completed") {
+            if (toolName === "tavily_search") {
+              title = `Tavily 搜索`;
+              data = `✅ 网络搜索完成，获取了 ${currentTool.result_length || 0} 字符的数据 (${index}/${total})`;
+            } else if (toolName === "tavily_summarize") {
+              title = `内容摘要`;
+              data = `✅ 摘要生成完成，生成了 ${currentTool.result_length || 0} 字符 (${index}/${total})`;
+            } else {
+              title = `${toolName}`;
+              data = `✅ 执行完成，生成了 ${currentTool.result_length || 0} 字符 (${index}/${total})`;
+            }
+          } else if (status === "error") {
+            if (toolName === "tavily_search") {
+              title = `Tavily 搜索`;
+              data = `❌ 搜索执行出错: ${currentTool.error || "未知错误"} (${index}/${total})`;
+            } else if (toolName === "tavily_summarize") {
+              title = `内容摘要`;
+              data = `❌ 摘要生成出错: ${currentTool.error || "未知错误"} (${index}/${total})`;
+            } else {
+              title = `${toolName}`;
+              data = `❌ 执行出错: ${currentTool.error || "未知错误"} (${index}/${total})`;
+            }
+          } else {
+            // 向后兼容旧格式 - 多个工具的统计信息
+            title = `Tools Execution Summary`;
+            data = `Completed ${detailsArray.length} tool operations`;
+            
+            if (detailsArray.length === 1) {
+              if (toolName === "tavily_search") {
+                title = `Tavily Search Complete`;
+                data = `Web search completed, found ${currentTool.result_length || 0} characters of data`;
+              } else if (toolName === "tavily_summarize") {
+                title = `Content Summary Complete`;
+                data = `Summarization completed, generated ${currentTool.result_length || 0} characters`;
+              } else {
+                title = `${toolName} Complete`;
+                data = `Tool execution completed, generated ${currentTool.result_length || 0} characters`;
+              }
+            } else {
+              const searchCount = detailsArray.filter(t => t.tool_name === "tavily_search").length;
+              const summaryCount = detailsArray.filter(t => t.tool_name === "tavily_summarize").length;
+              const parts = [];
+              if (searchCount > 0) parts.push(`${searchCount} searches`);
+              if (summaryCount > 0) parts.push(`${summaryCount} summaries`);
+              data = `Completed: ${parts.join(", ")}`;
+            }
+          }
+          
+          processedEvent = {
+            title,
+            data,
+          };
+          eventProcessed = true;
+        }
+      } else if (event.current_tool_status) {
+        // 🔧 NEW: 处理实时工具状态事件
+        console.log("🔧 Current Tool Status 事件:", event.current_tool_status);
+        
         processedEvent = {
-          title: "Content Enhancement Analysis",
-          data: statusMessages[enhancementStatus] || `Status: ${enhancementStatus}`,
+          title: "工具执行状态",
+          data: event.current_tool_status as string,
         };
         eventProcessed = true;
-      } else if (event.record_task_completion) {
-        const completionData = event.record_task_completion as {
-          next_node_decision?: string;
-          ledger?: Array<{ description?: string }>;
-        };
-        const nextDecision = completionData.next_node_decision || "continue";
-        const ledger = completionData.ledger || [];
-        const completedTask = ledger.length > 0 ? ledger[0].description : "Unknown task";
+      } else if (event.compress_research) {
         processedEvent = {
-          title: "Task Completion Recorded",
-          data: nextDecision === "end" 
-            ? `All tasks completed. Final task: ${completedTask}`
-            : `Task completed: ${completedTask}. Moving to next task.`,
+          title: "Compressing Research Data",
+          data: "Analyzing and summarizing collected research information...",
         };
         eventProcessed = true;
-      } else if (event.finalize_answer) {
+      } else if (event.generate_final_report || event.final_report_generation) {
         processedEvent = {
-          title: "Finalizing Answer",
-          data: "Composing and presenting the final answer.",
+          title: "Generating Final Report",
+          data: "Creating comprehensive research report with findings and analysis...",
         };
         hasFinalizeEventOccurredRef.current = true;
         eventProcessed = true;
+      }
+      
+      // 🔧 FALLBACK: 保留旧的事件处理逻辑以向后兼容
+      if (!eventProcessed) {
+        if (event.generate_query) {
+          const queryData = event.generate_query as { query_list?: string[] };
+          processedEvent = {
+            title: "Generating Search Queries",
+            data: queryData.query_list?.join(", ") || "No queries",
+          };
+          eventProcessed = true;
+        } else if (event.web_research) {
+          console.log("🔍 Web Research 事件详细信息:", event.web_research);
+          
+          const researchData = event.web_research as { sources_gathered?: SourceData[] };
+          const sources = researchData.sources_gathered || [];
+          const numSources = sources.length;
+          
+          if (sources.length > 0) {
+            console.log("📊 第一个来源的结构:", sources[0]);
+            console.log("📊 所有来源的keys:", sources.map(s => Object.keys(s)));
+          }
+          
+          const uniqueLabels = [
+            ...new Set(sources.map((s: SourceData) => s.label).filter(Boolean)),
+          ];
+          const exampleLabels = uniqueLabels.slice(0, 3).join(", ");
+          processedEvent = {
+            title: "Web Research",
+            data: `Gathered ${numSources} sources. Related to: ${
+              exampleLabels || "N/A"
+            }.`,
+          };
+          eventProcessed = true;
+        } else if (event.reflection) {
+          console.log("🤔 Reflection 事件详细信息:", event.reflection);
+          
+          const reflectionData = event.reflection as {
+            reflection_is_sufficient?: boolean;
+            reflection_follow_up_queries?: string[];
+          };
+          processedEvent = {
+            title: "Reflection",
+            data: reflectionData.reflection_is_sufficient
+              ? "Search successful, generating final answer."
+              : `Need more information, searching for ${(reflectionData.reflection_follow_up_queries || []).join(
+                  ", "
+                )}`,
+          };
+          eventProcessed = true;
+        } else if (event.finalize_answer) {
+          processedEvent = {
+            title: "Finalizing Answer",
+            data: "Composing and presenting the final answer.",
+          };
+          hasFinalizeEventOccurredRef.current = true;
+          eventProcessed = true;
+        }
       }
       
       // 🐛 DEBUG: 检查是否有未处理的事件
@@ -209,20 +393,28 @@ export default function App() {
           eventKeys: Object.keys(event),
           eventData: event,
           possibleMissingHandlers: [
-            "record_task_completion",
-            "content_enhancement", 
-            "should_enhance_content",
-            "decide_next_research_step",
-            "decide_next_step_in_plan"
+            "clarify_with_user",
+            "write_research_brief", 
+            "supervisor",
+            "supervisor_tools",
+            "researcher",
+            "researcher_tools",
+            "tool_execution_details",
+            "current_tool_status",
+            "compress_research",
+            "final_report_generation"
           ]
         });
       } else {
         console.log("✅ 事件已处理:", processedEvent?.title);
         
-        // 🔧 NEW: 在任何关键事件处理后都尝试保存快照
-        if (processedEvent?.title === "Reflection" || 
-            processedEvent?.title === "Content Enhancement Analysis" ||
-            processedEvent?.title === "Research Quality Evaluation") {
+        // 🔧 NEW: 在任何关键事件处理后都尝试保存快照，包括研究工具事件
+        if (processedEvent?.title === "Research Supervision" || 
+            processedEvent?.title === "Compressing Research Data" ||
+            processedEvent?.title === "Generating Final Report" ||
+            processedEvent?.title?.includes("Web Search") ||
+            processedEvent?.title?.includes("Content Analysis") ||
+            processedEvent?.title === "Conducting Research") {
           console.log(`🎯 检测到关键事件，准备保存快照: ${processedEvent.title}`);
           saveCurrentStateSnapshot(processedEvent.title);
         }

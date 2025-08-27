@@ -173,6 +173,47 @@ function buildTaskDetails(events: EventData[], state: StateData): TaskDetail[] {
 
   console.log(`🏗️ 构建任务详情: 总任务数 ${plan.length}, 当前指针 ${currentPointer}`);
 
+  // 🔧 NEW: 如果没有传统的plan结构，为新后端创建默认任务结构
+  if (plan.length === 0) {
+    // 检查是否有新后端的事件
+    const hasNewBackendEvents = events.some(event => 
+      event.clarify_with_user || 
+      event.write_research_brief || 
+      event.plan_research ||           // 扁平图新节点
+      event.execute_research_tools ||  // 扁平图新节点
+      event.perform_searches ||        // 扁平图新节点
+      event.analyze_search_results ||  // 扁平图新节点
+      event.supervisor || 
+      event.researcher || 
+      event.researcher_tools || 
+      event.compress_research || 
+      event.generate_final_report ||   // 扁平图节点
+      event.final_report_generation
+    );
+
+    if (hasNewBackendEvents) {
+      console.log(`🔧 检测到新后端事件，创建默认任务结构`);
+      
+      // 确定任务状态：如果有final_report_generation就是完成，否则是进行中
+      const isCompleted = events.some(event => event.final_report_generation);
+      const hasResearchStarted = events.some(event => 
+        event.researcher || event.researcher_tools || event.compress_research
+      );
+      
+      // 为新后端创建一个默认的研究任务
+      const defaultTask: TaskDetail = {
+        taskId: 'research-task-1',
+        description: 'Comprehensive Research Investigation',
+        status: isCompleted ? 'completed' : (hasResearchStarted ? 'in_progress' : 'pending'),
+        steps: buildTaskSteps(events, state, 'research-task-1', true)
+      };
+      
+      console.log(`🔧 创建了默认任务，包含 ${defaultTask.steps.length} 个步骤`);
+      return [defaultTask];
+    }
+  }
+
+  // 🔧 FALLBACK: 使用传统的plan结构（向后兼容）
   return plan.map((task: TaskData, index: number) => {
     const taskId = task.id;
     console.log(`📋 处理任务 ${index}: ${taskId} - ${task.description}`);
@@ -201,7 +242,7 @@ function buildTaskDetails(events: EventData[], state: StateData): TaskDetail[] {
 }
 
 /**
- * 构建任务步骤 - 改进版本，支持显示所有任务的历史步骤
+ * 构建任务步骤 - 更新版本，支持新后端事件结构
  */
 function buildTaskSteps(
   events: EventData[], 
@@ -216,7 +257,324 @@ function buildTaskSteps(
 
   // 如果是当前任务或已完成任务，根据事件构建步骤
   if (shouldShowSteps) {
-    // 1. Query Generation
+    
+    // 🔧 NEW: 确定总体进度状态，用于判断哪些步骤是正在进行的
+    const totalEvents = events.length;
+    const isOverallCompleted = events.some(event => event.final_report_generation);
+    
+    // 🔧 NEW: 支持新后端的事件结构
+    // 1. Clarify with User
+    const clarifyEvents = events.filter(event => event.clarify_with_user);
+    console.log(`🔍 Clarify事件数: ${clarifyEvents.length}`);
+    if (clarifyEvents.length > 0) {
+      steps.push({
+        type: 'planning',
+        title: 'Clarifying Requirements',
+        status: 'completed',
+        data: clarifyEvents[clarifyEvents.length - 1].clarify_with_user as EventData,
+        details: [{
+          type: 'analysis',
+          content: 'Analyzed user request and determined research scope',
+          metadata: { 
+            phase: 'requirement_analysis',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 2. Write Research Brief
+    const briefEvents = events.filter(event => event.write_research_brief);
+    console.log(`🔍 Research Brief事件数: ${briefEvents.length}`);
+    if (briefEvents.length > 0) {
+      steps.push({
+        type: 'planning',
+        title: 'Writing Research Brief',
+        status: 'completed',
+        data: briefEvents[briefEvents.length - 1].write_research_brief as EventData,
+        details: [{
+          type: 'analysis',
+          content: 'Created detailed research brief and strategy',
+          metadata: { 
+            phase: 'strategy_planning',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 3. Supervisor
+    const supervisorEvents = events.filter(event => event.supervisor);
+    console.log(`🔍 Supervisor事件数: ${supervisorEvents.length}`);
+    if (supervisorEvents.length > 0) {
+      steps.push({
+        type: 'planning',
+        title: 'Research Supervision',
+        status: 'completed',
+        data: supervisorEvents[supervisorEvents.length - 1].supervisor as EventData,
+        details: [{
+          type: 'analysis',
+          content: 'Coordinated research activities and monitored progress',
+          metadata: { 
+            phase: 'research_coordination',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 4. Supervisor Tools
+    const supervisorToolsEvents = events.filter(event => event.supervisor_tools);
+    console.log(`🔍 Supervisor Tools事件数: ${supervisorToolsEvents.length}`);
+    if (supervisorToolsEvents.length > 0) {
+      steps.push({
+        type: 'planning',
+        title: 'Supervisor Analysis',
+        status: 'completed',
+        data: supervisorToolsEvents[supervisorToolsEvents.length - 1].supervisor_tools as EventData,
+        details: [{
+          type: 'decision',
+          content: 'Evaluated research progress and determined next steps',
+          metadata: { 
+            phase: 'progress_evaluation',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 5. Researcher
+    const researcherEvents = events.filter(event => event.researcher);
+    console.log(`🔍 Researcher事件数: ${researcherEvents.length}`);
+    if (researcherEvents.length > 0) {
+      steps.push({
+        type: 'query_generation',
+        title: 'Research Planning',
+        status: 'completed',
+        data: researcherEvents[researcherEvents.length - 1].researcher as EventData,
+        details: [{
+          type: 'search_queries',
+          content: 'Planned detailed research approach and generated search queries',
+          metadata: { 
+            phase: 'query_generation',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 6. Researcher Tools - 改进版本，支持子图事件
+    const researcherToolsEvents = events.filter(event => {
+      // 检查直接的researcher_tools事件
+      if (event.researcher_tools) return true;
+      
+      // 检查子图事件（带namespace的）
+      if ((event.namespace || event.ns) && 
+          (event.namespace?.includes('researcher') || event.ns?.includes('researcher'))) {
+        // 检查是否包含researcher_tools节点
+        return Object.keys(event).some(key => key === 'researcher_tools');
+      }
+      
+      return false;
+    });
+    console.log(`🔍 Researcher Tools事件数（包括子图）: ${researcherToolsEvents.length}`);
+    
+    // 🆕 处理扁平图的搜索事件
+    const performSearchesEvents = events.filter(event => event.perform_searches);
+    console.log(`🔍 Perform Searches事件数（扁平图）: ${performSearchesEvents.length}`);
+    
+    // 🆕 处理扁平图的搜索结果分析事件
+    const analyzeResultsEvents = events.filter(event => event.analyze_search_results);
+    console.log(`🔍 Analyze Search Results事件数（扁平图）: ${analyzeResultsEvents.length}`);
+    if (researcherToolsEvents.length > 0) {
+      // 为每个researcher_tools事件创建单独的步骤
+      researcherToolsEvents.forEach((event, index) => {
+        const toolsData = event.researcher_tools as any;
+        let stepTitle = `Research Operation ${index + 1}`;
+        let stepContent = 'Executed research operation';
+        let stepType: TaskStep['type'] = 'web_research';
+        
+        // 尝试从工具数据中获取更具体的信息
+        if (toolsData && typeof toolsData === 'object') {
+          console.log(`🔍 分析Researcher Tools事件 ${index + 1}:`, toolsData);
+          
+          // 检查不同类型的工具调用
+          if (toolsData.search_queries || toolsData.query || toolsData.tavily_search) {
+            stepTitle = `Tavily Web Search ${index + 1}`;
+            stepContent = `Performed web search and gathered sources`;
+            stepType = 'web_research';
+          } else if (toolsData.summary || toolsData.summarize || toolsData.analysis) {
+            stepTitle = `Content Summary ${index + 1}`;
+            stepContent = `Analyzed and summarized research content`;
+            stepType = 'content_enhancement';
+          } else if (toolsData.tools_called || toolsData.tool_calls) {
+            stepTitle = `Research Tools ${index + 1}`;
+            stepContent = `Executed research tools and processed results`;
+            stepType = 'web_research';
+          } else if (toolsData.sources || toolsData.results) {
+            stepTitle = `Source Processing ${index + 1}`;
+            stepContent = `Processed and validated research sources`;
+            stepType = 'web_research';
+          }
+          
+          // 如果有更多具体信息，尝试提取
+          const details = [];
+          if (toolsData.query) {
+            details.push({
+              type: 'search_queries' as const,
+              content: `Search Query: "${toolsData.query}"`,
+              metadata: { query: toolsData.query }
+            });
+          }
+          if (toolsData.sources_count || toolsData.results_count) {
+            const count = toolsData.sources_count || toolsData.results_count;
+            details.push({
+              type: 'sources' as const,
+              content: `Found ${count} sources`,
+              metadata: { count: count }
+            });
+          }
+          
+          // 🔧 NEW: 智能状态判断 - 最后几个操作可能仍在进行中
+          let stepStatus: 'pending' | 'in_progress' | 'completed' = 'completed';
+          if (!isOverallCompleted && index >= researcherToolsEvents.length - 2) {
+            // 如果整体未完成，最后1-2个工具事件可能仍在处理中
+            stepStatus = index === researcherToolsEvents.length - 1 ? 'in_progress' : 'completed';
+          }
+          
+          steps.push({
+            type: stepType,
+            title: stepTitle,
+            status: stepStatus,
+            data: toolsData,
+            details: details.length > 0 ? details : [{
+              type: 'sources',
+              content: stepContent,
+              metadata: { 
+                phase: 'data_collection',
+                status: stepStatus,
+                operation_index: index + 1
+              }
+            }]
+          });
+        } else {
+          // 默认步骤也应用智能状态判断
+          let stepStatus: 'pending' | 'in_progress' | 'completed' = 'completed';
+          if (!isOverallCompleted && index >= researcherToolsEvents.length - 2) {
+            stepStatus = index === researcherToolsEvents.length - 1 ? 'in_progress' : 'completed';
+          }
+          
+          steps.push({
+            type: 'web_research',
+            title: stepTitle,
+            status: stepStatus,
+            data: toolsData,
+            details: [{
+              type: 'sources',
+              content: stepContent,
+              metadata: { 
+                phase: 'data_collection',
+                status: stepStatus,
+                operation_index: index + 1
+              }
+            }]
+          });
+        }
+      });
+    }
+    
+    // 🆕 6.5. 处理扁平图搜索事件
+    if (performSearchesEvents.length > 0) {
+      performSearchesEvents.forEach((event, index) => {
+        const searchData = event.perform_searches as any;
+        console.log(`🔍 处理Perform Searches事件 ${index + 1}:`, searchData);
+        
+        steps.push({
+          type: 'web_research',
+          title: `🔍 Web Search ${index + 1}`,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+          data: searchData,
+          details: [{
+            type: 'search_queries',
+            content: 'Executing Tavily web searches to gather information',
+            metadata: { 
+              phase: 'web_search',
+              status: 'completed',
+              search_index: index + 1
+            }
+          }]
+        });
+      });
+    }
+    
+    // 🆕 6.6. 处理扁平图搜索结果分析事件  
+    if (analyzeResultsEvents.length > 0) {
+      analyzeResultsEvents.forEach((event, index) => {
+        const analysisData = event.analyze_search_results as any;
+        console.log(`🔍 处理Analyze Search Results事件 ${index + 1}:`, analysisData);
+        
+        steps.push({
+          type: 'content_enhancement',
+          title: `📊 Search Results Analysis ${index + 1}`,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+          data: analysisData,
+          details: [{
+            type: 'analysis',
+            content: 'Processing and summarizing collected search information',
+            metadata: { 
+              phase: 'data_analysis',
+              status: 'completed',
+              analysis_index: index + 1
+            }
+          }]
+        });
+      });
+    }
+
+    // 7. Compress Research
+    const compressEvents = events.filter(event => event.compress_research);
+    console.log(`🔍 Compress Research事件数: ${compressEvents.length}`);
+    if (compressEvents.length > 0) {
+      steps.push({
+        type: 'content_enhancement',
+        title: 'Compressing Research Data',
+        status: 'completed',
+        data: compressEvents[compressEvents.length - 1].compress_research as EventData,
+        details: [{
+          type: 'analysis',
+          content: 'Analyzed and summarized collected research information',
+          metadata: { 
+            phase: 'data_synthesis',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 8. Final Report Generation
+    const finalReportEvents = events.filter(event => event.final_report_generation);
+    console.log(`🔍 Final Report事件数: ${finalReportEvents.length}`);
+    if (finalReportEvents.length > 0) {
+      steps.push({
+        type: 'completion',
+        title: 'Generating Final Report',
+        status: 'completed',
+        data: finalReportEvents[finalReportEvents.length - 1].final_report_generation as EventData,
+        details: [{
+          type: 'analysis',
+          content: 'Created comprehensive research report with findings and analysis',
+          metadata: { 
+            phase: 'report_generation',
+            status: 'completed'
+          }
+        }]
+      });
+    }
+
+    // 🔧 FALLBACK: 保留旧后端事件处理逻辑以向后兼容
+    // 1. Query Generation (旧)
     const queryEvents = events.filter(event => event.generate_query);
     console.log(`🔍 Query事件数: ${queryEvents.length}`);
     if (queryEvents.length > 0) {
@@ -479,6 +837,21 @@ function getCurrentTaskId(events: EventData[], state: StateData): string | null 
     return plan[currentPointer].id;
   }
   
+  // 🔧 NEW: 对于新后端，如果没有plan结构，使用默认任务ID
+  const hasNewBackendEvents = events.some(event => 
+    event.clarify_with_user || 
+    event.write_research_brief || 
+    event.supervisor || 
+    event.researcher || 
+    event.researcher_tools || 
+    event.compress_research || 
+    event.final_report_generation
+  );
+
+  if (hasNewBackendEvents) {
+    return 'research-task-1';
+  }
+  
   return null;
 }
 
@@ -486,6 +859,29 @@ function getCurrentTaskId(events: EventData[], state: StateData): string | null 
  * 确定整体状态
  */
 function determineOverallStatus(events: EventData[]): 'planning' | 'researching' | 'completed' {
+  // 🔧 NEW: 检查新后端的完成事件
+  const newBackendCompleteEvents = events.filter(event => event.final_report_generation);
+  if (newBackendCompleteEvents.length > 0) {
+    return 'completed';
+  }
+
+  // 🔧 NEW: 检查新后端的研究事件
+  const newBackendResearchEvents = events.filter(event => 
+    event.researcher || event.researcher_tools || event.compress_research
+  );
+  if (newBackendResearchEvents.length > 0) {
+    return 'researching';
+  }
+
+  // 🔧 NEW: 检查新后端的规划事件
+  const newBackendPlanningEvents = events.filter(event => 
+    event.clarify_with_user || event.write_research_brief || event.supervisor
+  );
+  if (newBackendPlanningEvents.length > 0) {
+    return 'researching'; // 新后端的规划也算作研究阶段
+  }
+
+  // 🔧 FALLBACK: 检查旧后端事件
   // 检查是否有finalize_answer事件
   const finalizeEvents = events.filter(event => event.finalize_answer);
   if (finalizeEvents.length > 0) {
