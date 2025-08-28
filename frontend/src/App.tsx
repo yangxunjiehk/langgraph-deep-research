@@ -173,15 +173,15 @@ export default function App() {
         scrollViewport.scrollTop = scrollViewport.scrollHeight;
       }
     }
-  }, [thread.messages]);
+  }, [filteredMessages]);
 
   useEffect(() => {
     if (
       hasFinalizeEventOccurredRef.current &&
       !thread.isLoading &&
-      thread.messages.length > 0
+      filteredMessages.length > 0
     ) {
-      const lastMessage = thread.messages[thread.messages.length - 1];
+      const lastMessage = filteredMessages[filteredMessages.length - 1];
       if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
         setHistoricalActivities((prev) => ({
           ...prev,
@@ -190,7 +190,7 @@ export default function App() {
       }
       hasFinalizeEventOccurredRef.current = false;
     }
-  }, [thread.messages, thread.isLoading, processedEventsTimeline]);
+  }, [filteredMessages, thread.isLoading, processedEventsTimeline]);
 
   const handleSubmit = useCallback(
     (submittedInputValue: string, effort: string, model: string) => {
@@ -220,7 +220,7 @@ export default function App() {
       }
 
       const newMessages: Message[] = [
-        ...(thread.messages || []),
+        ...(filteredMessages || []),
         {
           type: "human",
           content: submittedInputValue,
@@ -242,15 +242,50 @@ export default function App() {
     window.location.reload();
   }, [thread]);
 
+  // 🎯 NEW: 过滤消息，只显示用户输入和最终报告
+  const filteredMessages = useMemo(() => {
+    if (!thread.messages) return [];
+    
+    return thread.messages.filter((message, index) => {
+      // 始终显示用户消息
+      if (message.type === "human") {
+        return true;
+      }
+      
+      // 对于AI消息，只显示包含最终报告的消息
+      if (message.type === "ai") {
+        const content = typeof message.content === "string" ? message.content : "";
+        
+        // 检查是否是最终报告（通常包含完整的研究报告标题和结构）
+        const isFinalReport = content.includes("# ") && 
+                             content.length > 500 && // 最终报告通常很长
+                             (content.includes("## Executive Summary") || 
+                              content.includes("## Strategic Implications") ||
+                              content.includes("## 执行摘要") ||
+                              content.includes("## 战略建议"));
+        
+        return isFinalReport;
+      }
+      
+      return false;
+    });
+  }, [thread.messages]);
+
+  console.log("🎯 消息过滤:", {
+    total: thread.messages?.length || 0,
+    filtered: filteredMessages.length,
+    isLoading: thread.isLoading
+  });
+
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
       <main className="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
         <div
           className={`flex-1 overflow-y-auto ${
-            thread.messages.length === 0 ? "flex" : ""
+            filteredMessages.length === 0 && !thread.isLoading && processedEventsTimeline.length === 0 ? "flex" : ""
           }`}
         >
-          {thread.messages.length === 0 ? (
+          {filteredMessages.length === 0 && !thread.isLoading && processedEventsTimeline.length === 0 ? (
             <WelcomeScreen
               handleSubmit={handleSubmit}
               isLoading={thread.isLoading}
@@ -258,7 +293,7 @@ export default function App() {
             />
           ) : (
             <ChatMessagesView
-              messages={thread.messages}
+              messages={filteredMessages}
               isLoading={thread.isLoading}
               scrollAreaRef={scrollAreaRef}
               onSubmit={handleSubmit}
