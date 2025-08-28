@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import random
 from typing import List
 from datetime import datetime
 
@@ -14,6 +16,7 @@ from google.genai import Client
 import tiktoken  # 需确保环境已安装 tiktoken
 from langchain_openai import AzureChatOpenAI
 from tavily import TavilyClient
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agent.state import (
     OverallState,
@@ -43,7 +46,11 @@ from agent.enhanced_graph_nodes import (
     should_enhance_content
 )
 
-load_dotenv()
+# 获取backend目录的绝对路径并加载.env文件
+from pathlib import Path
+backend_dir = Path(__file__).parent.parent.parent  # 从 src/agent/graph.py 向上三级到 backend/
+env_path = backend_dir / ".env"
+load_dotenv(env_path)
 
 # 检查Azure OpenAI配置
 if os.getenv("AZURE_OPENAI_API_KEY") is None:
@@ -52,11 +59,15 @@ if os.getenv("AZURE_OPENAI_ENDPOINT") is None:
     raise ValueError("AZURE_OPENAI_ENDPOINT is not set")
 
 # 检查Tavily搜索配置
-if os.getenv("TAVILY_API_KEY") is None:
+tavily_key = os.getenv("TAVILY_API_KEY")
+if tavily_key is None:
     print("[WARNING] TAVILY_API_KEY is not set, using placeholder")
+    tavily_key = "tvly-placeholder"
+else:
+    print(f"[INFO] TAVILY_API_KEY loaded: tvly-{'*' * 8}...")  # 只显示前缀确认加载
     
 # 创建Tavily客户端
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", "tvly-placeholder"))
+tavily_client = TavilyClient(api_key=tavily_key)
 
 # Azure OpenAI辅助函数
 def get_azure_openai_llm(model_name: str, temperature: float = 0.3, max_retries: int = 2) -> AzureChatOpenAI:
@@ -85,6 +96,7 @@ def get_azure_openai_llm(model_name: str, temperature: float = 0.3, max_retries:
 # Nodes
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
     """LangGraph node that generates search queries based on the current research task from the plan."""
+    print("[DEBUG] Entering generate_query node")
     configurable = Configuration.from_runnable_config(config)
 
     # check for custom initial search query count
@@ -92,6 +104,7 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
     # init Azure OpenAI
+    print(f"[DEBUG] Initializing {configurable.query_generator_model} model")
     llm = get_azure_openai_llm(
         model_name=configurable.query_generator_model,
         temperature=1.0,
@@ -114,7 +127,9 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         research_topic=research_topic,
         number_queries=state["initial_search_query_count"],
     )
+    print(f"[DEBUG] Generating {state['initial_search_query_count']} queries for: {research_topic[:100]}...")
     result = structured_llm.invoke(formatted_prompt)
+    print(f"[DEBUG] Generated queries: {result.query}")
     
     return {
         "query_list": result.query,
@@ -124,10 +139,27 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
 
 
 def continue_to_web_research(state: QueryGenerationState):
-    """LangGraph node that sends the search queries to the web research node.
+    """继续到批量网络研究节点 - 不再使用并行节点"""
+    return "web_research_batch"
 
-    This is used to spawn n number of web research nodes, one for each search query.
-    """
+
+def web_research_batch(state: QueryGenerationState, config: RunnableConfig) -> OverallState:
+    """LangGraph节点：批量处理所有搜索查询，避免API限流"""
+    print("[BATCH-SEARCH] Starting batch web research")
+    
+    configurable = Configuration.from_runnable_config(config)
+    all_queries = state.get("query_list", [])
+    
+    if not all_queries:
+        print("[BATCH-SEARCH] No queries to process")
+        return {
+            "sources_gathered": [],
+            "executed_search_queries": [],
+            "web_research_result": [],
+            "current_task_detailed_findings": [],
+            "task_specific_results": []
+        }
+    
     # Get current task info
     plan = state.get("plan", [])
     current_pointer = state.get("current_task_pointer", 0)
@@ -136,14 +168,137 @@ def continue_to_web_research(state: QueryGenerationState):
     if plan and current_pointer < len(plan):
         current_task_id = plan[current_pointer]["id"]
     
-    return [
-        Send("web_research", {
-            "search_query": search_query, 
-            "id": int(idx),
-            "current_task_id": current_task_id
-        })
-        for idx, search_query in enumerate(state["query_list"])
-    ]
+    all_sources_gathered = []
+    all_research_results = []
+    all_detailed_findings = []
+    all_task_specific_results = []
+    executed_queries = []
+    
+    # 检查API key是否设置
+    if not tavily_key or tavily_key == "tvly-placeholder":
+        print("[BATCH-SEARCH] TAVILY_API_KEY not set, using simulated data for all queries")
+        use_simulated = True
+    else:
+        use_simulated = False
+        print(f"[BATCH-SEARCH] Processing {len(all_queries)} queries with thread pool")
+
+    def search_single_query(query_data):
+        """单个查询的搜索函数，用于线程池"""
+        idx, search_query = query_data
+        
+        try:
+            if use_simulated:
+                # 使用模拟数据
+                search_result = None
+            else:
+                # 执行真实搜索
+                search_result = tavily_client.search(
+                    query=search_query,
+                    max_results=5,
+                    include_raw_content=True
+                )
+            
+            # 处理搜索结果
+            sources_gathered = []
+            research_content_parts = []
+            
+            if search_result and isinstance(search_result, dict):
+                for result in search_result.get("results", []):
+                    source = {
+                        "title": result.get("title", "No title"),
+                        "url": result.get("url", ""),
+                        "snippet": result.get("content", "")[:500],
+                        "label": search_query  # 使用搜索查询作为标签
+                    }
+                    sources_gathered.append(source)
+                    
+                    content = result.get("raw_content", result.get("content", ""))[:2000]
+                    research_content_parts.append(f"Source: {result.get('title', 'Unknown')}\nURL: {result.get('url', 'N/A')}\nContent: {content}\n")
+            else:
+                # 模拟搜索结果
+                simulated_sources = [{
+                    "title": f"Research Result for: {search_query[:50]}",
+                    "url": "https://example.com/search-result",
+                    "snippet": f"Simulated search result for query: {search_query}",
+                    "label": search_query
+                }]
+                sources_gathered = simulated_sources
+                research_content_parts = [f"Note: Simulated data for query: {search_query}"]
+            
+            # 汇总结果
+            if research_content_parts:
+                response_text = f"Web research results for '{search_query}':\n\n" + "\n---\n".join(research_content_parts)
+            else:
+                response_text = f"No results found for query: {search_query}"
+            
+            print(f"[BATCH-SEARCH] Query {idx+1}/{len(all_queries)} completed - found {len(sources_gathered)} sources")
+            
+            return {
+                'idx': idx,
+                'query': search_query,
+                'sources': sources_gathered,
+                'response_text': response_text,
+                'success': True
+            }
+            
+        except Exception as e:
+            print(f"[BATCH-SEARCH] Error processing query {idx+1}/{len(all_queries)}: {str(e)}")
+            return {
+                'idx': idx,
+                'query': search_query,
+                'sources': [],
+                'response_text': f"Search for '{search_query}' failed: {str(e)}",
+                'success': False
+            }
+
+    # 使用线程池并发执行所有搜索
+    query_data_list = list(enumerate(all_queries))
+    
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # 提交所有任务
+        future_to_query = {executor.submit(search_single_query, query_data): query_data for query_data in query_data_list}
+        
+        # 收集结果（按索引排序以保持顺序）
+        results = [None] * len(all_queries)
+        for future in as_completed(future_to_query):
+            result = future.result()
+            results[result['idx']] = result
+    
+    # 处理所有结果
+    for result in results:
+        if result:
+            all_sources_gathered.extend(result['sources'])
+            all_research_results.append(result['response_text'])
+            executed_queries.append(result['query'])
+            
+            # 创建详细发现条目
+            detailed_finding = {
+                "task_id": current_task_id,
+                "query_id": result['idx'],
+                "content": result['response_text'],
+                "source": result['sources'][0] if result['sources'] else None,
+                "timestamp": datetime.now().isoformat()
+            }
+            all_detailed_findings.append(detailed_finding)
+            
+            # 任务特定结果
+            task_specific_result = {
+                "task_id": current_task_id,
+                "content": result['response_text'],
+                "sources": result['sources'],
+                "timestamp": datetime.now().isoformat()
+            }
+            all_task_specific_results.append(task_specific_result)
+    
+    print(f"[BATCH-SEARCH] Batch completed - processed {len(executed_queries)} queries, found {len(all_sources_gathered)} total sources")
+    
+    return {
+        "sources_gathered": all_sources_gathered,
+        "executed_search_queries": executed_queries,
+        "web_research_result": all_research_results,
+        "current_task_detailed_findings": all_detailed_findings,
+        "task_specific_results": all_task_specific_results
+    }
 
 
 def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
@@ -169,31 +324,64 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
         # 使用Tavily进行真实网络搜索
         try:
             print(f"[SEARCH] Performing Tavily search for: {state['search_query']}")
-            search_result = tavily_client.search(
-                query=state["search_query"],
-                max_results=5,
-                include_raw_content=True
-            )
+            
+            # 检查API key是否设置
+            if not tavily_key or tavily_key == "tvly-placeholder":
+                print("[WARNING] TAVILY_API_KEY not properly set, skipping search")
+                search_result = None
+            else:
+                # 添加随机延迟避免API限流（对于并行请求）
+                # 基于ID添加递增延迟，确保请求分散
+                search_id = state.get("id", 0)
+                delay = 0.5 + (search_id * 0.3) + random.uniform(0, 0.2)  # 0.5-1.5秒之间的延迟
+                print(f"[SEARCH] Waiting {delay:.2f}s before search (id={search_id})")
+                time.sleep(delay)
+                
+                search_result = tavily_client.search(
+                    query=state["search_query"],
+                    max_results=5,
+                    include_raw_content=True
+                )
             
             # print(f"[DEBUG] Tavily search result: {search_result}")  # 调试日志已注释
             
             sources_gathered = []
             research_content_parts = []
             
-            for result in search_result.get("results", []):
-                source = {
-                    "title": result.get("title", "No title"),
-                    "url": result.get("url", ""),
-                    "snippet": result.get("content", "")[:500]
-                }
-                sources_gathered.append(source)
-                
-                # 整合搜索结果内容
-                content = result.get("raw_content", result.get("content", ""))[:2000]  # 限制内容长度
-                research_content_parts.append(f"Source: {result.get('title', 'Unknown')}\nURL: {result.get('url', 'N/A')}\nContent: {content}\n")
+            # 安全检查 search_result
+            if search_result and isinstance(search_result, dict):
+                for result in search_result.get("results", []):
+                    source = {
+                        "title": result.get("title", "No title"),
+                        "url": result.get("url", ""),
+                        "snippet": result.get("content", "")[:500],
+                        "label": state.get("search_query", "Unknown query")  # 添加label字段，使用搜索查询作为标签
+                    }
+                    sources_gathered.append(source)
+                    
+                    # 整合搜索结果内容
+                    content = result.get("raw_content", result.get("content", ""))[:2000]  # 限制内容长度
+                    research_content_parts.append(f"Source: {result.get('title', 'Unknown')}\nURL: {result.get('url', 'N/A')}\nContent: {content}\n")
+            else:
+                # 如果没有真实搜索结果，提供模拟数据以维持系统运行
+                print("[INFO] Using simulated search results as Tavily is not available")
+                simulated_sources = [
+                    {
+                        "title": f"Research Result for: {state['search_query'][:50]}",
+                        "url": "https://example.com/search-result",
+                        "snippet": f"Simulated search result for query: {state['search_query']}. This is placeholder content to maintain system operation when Tavily API is unavailable.",
+                        "label": state.get("search_query", "Unknown query")  # 添加label字段
+                    }
+                ]
+                sources_gathered = simulated_sources
+                research_content_parts = [f"Note: Tavily search API is not configured. Using simulated data.\n\nQuery: {state['search_query']}\n\nThis is a placeholder response to maintain system functionality."]
             
             # 汇总搜索结果
-            response_text = f"Web research results for '{state['search_query']}':\n\n" + "\n---\n".join(research_content_parts)
+            if research_content_parts:
+                response_text = f"Web research results for '{state['search_query']}':\n\n" + "\n---\n".join(research_content_parts)
+            else:
+                response_text = f"No results found for query: {state['search_query']}"
+            
             print(f"[SEARCH] Found {len(sources_gathered)} sources")
             
         except Exception as e:
@@ -871,10 +1059,12 @@ def planner_node(state: OverallState, config: RunnableConfig) -> dict:
     formatted_prompt = planning_instructions.format(user_query=user_query)
     
     try:
+        print(f"[DEBUG] Calling planner LLM...")
         result = structured_llm.invoke(formatted_prompt)
         # Convert ResearchPlan to expected format
         plan = [{"id": task.id, "description": task.description, "info_needed": True, "source_hint": task.description, "status": "pending"} for task in result.tasks]
         
+        print(f"[DEBUG] Planner completed - generated {len(plan)} tasks")
         return {
             "user_query": user_query,
             "plan": plan,
@@ -883,6 +1073,7 @@ def planner_node(state: OverallState, config: RunnableConfig) -> dict:
     except Exception as e:
         print(f"Planning failed: {e}")
         # Provide default single-task plan as fallback
+        print("[DEBUG] Using fallback plan due to error")
         return {
             "user_query": user_query,
             "plan": [{"id": "task-1", "description": f"Research and answer: {user_query}", "info_needed": True, "source_hint": user_query, "status": "pending"}],
@@ -1018,7 +1209,8 @@ builder = StateGraph(OverallState, config_schema=Configuration)
 # Define the nodes we will cycle between
 builder.add_node("planner", planner_node)
 builder.add_node("generate_query", generate_query)
-builder.add_node("web_research", web_research)
+builder.add_node("web_research_batch", web_research_batch)  # 新的批量搜索节点
+builder.add_node("web_research", web_research)  # 保留旧节点以防其他地方使用
 builder.add_node("reflection", reflection)
 builder.add_node("content_enhancement", content_enhancement_analysis)  # 新增内容增强节点
 builder.add_node("evaluate_research_enhanced", evaluate_research_enhanced)  # 新增增强版评估节点
@@ -1029,13 +1221,13 @@ builder.add_node("finalize_answer", finalize_answer)
 builder.add_edge(START, "planner")
 builder.add_edge("planner", "generate_query")
 
-# Add conditional edge to continue with search queries in a parallel branch
+# 修改：使用条件边到批量搜索节点
 builder.add_conditional_edges(
-    "generate_query", continue_to_web_research, ["web_research"]
+    "generate_query", continue_to_web_research, ["web_research_batch"]
 )
 
-# Reflect on the web research
-builder.add_edge("web_research", "reflection")
+# 从批量搜索到reflection
+builder.add_edge("web_research_batch", "reflection")
 
 # 修改reflection后的路由逻辑 - 添加智能内容增强判断
 builder.add_conditional_edges(

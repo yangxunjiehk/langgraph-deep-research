@@ -1,9 +1,10 @@
 import { useStream } from "@langchain/langgraph-sdk/react";
 import type { Message } from "@langchain/langgraph-sdk";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { ChatMessagesView } from "@/components/ChatMessagesView";
+import { ReportViewer } from "@/components/ReportViewer";
 
 export default function App() {
   const [processedEventsTimeline, setProcessedEventsTimeline] = useState<
@@ -12,50 +13,67 @@ export default function App() {
   const [historicalActivities, setHistoricalActivities] = useState<
     Record<string, ProcessedEvent[]>
   >({});
+  const [finalReport, setFinalReport] = useState<string>("");
+  const [showReport, setShowReport] = useState<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
 
   const thread = useStream<{
     messages: Message[];
-    initial_search_query_count: number;
-    max_research_loops: number;
-    reasoning_model: string;
+    configurable?: {
+      allow_clarification?: boolean;
+      search_api?: string;
+    };
   }>({
     apiUrl: import.meta.env.DEV
       ? "http://localhost:2024"
       : "http://localhost:8123",
-    assistantId: "agent",
+    assistantId: "Deep Researcher New",  // 切换到deep_researcher_new后端
     messagesKey: "messages",
     onFinish: (event: any) => {
       console.log(event);
     },
     onUpdateEvent: (event: any) => {
-      // 🐛 DEBUG: 完整事件日志
-      console.log("📨 收到事件:", event);
-      console.log("📊 事件结构分析:", {
-        eventKeys: Object.keys(event),
-        eventType: typeof event,
-        hasGenerateQuery: !!event.generate_query,
-        hasWebResearch: !!event.web_research,
-        hasReflection: !!event.reflection,
-        hasPlanner: !!(event.planner_node || event.planner),
-        hasContentEnhancement: !!event.content_enhancement_analysis,
-        hasEvaluateResearch: !!event.evaluate_research_enhanced,
-        hasFinalizeAnswer: !!event.finalize_answer,
-        hasRecordTaskCompletion: !!event.record_task_completion,
-        allEventKeys: Object.keys(event).join(", ")
-      });
+      console.log("[DEBUG] Received event:", JSON.stringify(event, null, 2));  // 更详细的调试日志
       
       let processedEvent: ProcessedEvent | null = null;
       let eventProcessed = false;
-      if (event.generate_query) {
+      if (event.clarify_with_user) {
+        const clarifyStatus = event.clarify_with_user.clarify_status || "processing";
+        const statusMessages = {
+          "skipped": "Skipping clarification as requested",
+          "needs_clarification": "Requesting user clarification",
+          "completed": "User requirements clarified successfully",
+          "processing": "Processing user requirements"
+        };
         processedEvent = {
-          title: "Generating Search Queries",
-          data: event.generate_query.query_list.join(", "),
+          title: "User Clarification",
+          data: statusMessages[clarifyStatus] || `Status: ${clarifyStatus}`,
         };
         eventProcessed = true;
-      } else if (event.web_research) {
-        const sources = event.web_research.sources_gathered || [];
+      } else if (event.write_research_brief) {
+        const briefStatus = event.write_research_brief.brief_status || "processing";
+        const briefContent = event.write_research_brief.brief_content;
+        const statusMessages = {
+          "completed": briefContent ? `Research brief created: ${briefContent.substring(0, 100)}...` : "Research brief completed successfully",
+          "processing": "Analyzing and organizing research requirements...",
+          "error": "Error creating research brief"
+        };
+        processedEvent = {
+          title: "Writing Research Brief", 
+          data: statusMessages[briefStatus] || "Creating research strategy...",
+        };
+        eventProcessed = true;
+      } else if (event.generate_queries) {
+        processedEvent = {
+          title: "Generating Search Queries",
+          data: event.generate_queries.query_list 
+            ? event.generate_queries.query_list.join(", ")
+            : "Preparing search queries...",
+        };
+        eventProcessed = true;
+      } else if (event.perform_searches) {
+        const sources = event.perform_searches.sources_gathered || [];
         const numSources = sources.length;
         const uniqueLabels = [
           ...new Set(sources.map((s: any) => s.label).filter(Boolean)),
@@ -68,23 +86,40 @@ export default function App() {
           }.`,
         };
         eventProcessed = true;
-      } else if (event.reflection) {
+      } else if (event.analyze_search_results) {
+        const followUpQueries = event.analyze_search_results.reflection_follow_up_queries || [];
         processedEvent = {
           title: "Reflection",
-          data: event.reflection.reflection_is_sufficient
+          data: event.analyze_search_results.reflection_is_sufficient
             ? "Search successful, generating final answer."
-            : `Need more information, searching for ${(event.reflection.reflection_follow_up_queries || []).join(
-                ", "
-              )}`,
+            : followUpQueries.length > 0
+            ? `Need more information, searching for ${followUpQueries.join(", ")}`
+            : "Analyzing research results...",
         };
         eventProcessed = true;
-      } else if (event.planner_node || event.planner) {
-        const plannerData = event.planner_node || event.planner;
+      } else if (event.plan_research && (event.plan_research.planner_node || event.plan_research.planner)) {
+        const plannerData = event.plan_research.planner_node || event.plan_research.planner;
         processedEvent = {
           title: "Planning Research Strategy",
           data: plannerData.plan 
             ? `Generated ${plannerData.plan.length} research tasks`
             : "Analyzing research requirements...",
+        };
+        eventProcessed = true;
+      } else if (event.execute_research_tools) {
+        processedEvent = {
+          title: "Executing Research Tools",
+          data: event.execute_research_tools.execution_status === "ready_for_search"
+            ? "Preparing to execute research tasks"
+            : "Processing research execution strategy",
+        };
+        eventProcessed = true;
+      } else if (event.compress_research) {
+        processedEvent = {
+          title: "Compressing Research",
+          data: event.compress_research.compressed_notes_count 
+            ? `Compressed ${event.compress_research.compressed_notes_count} research notes`
+            : "Organizing and compressing research findings...",
         };
         eventProcessed = true;
       } else if (event.content_enhancement_analysis) {
@@ -119,8 +154,9 @@ export default function App() {
         };
         eventProcessed = true;
       } else if (event.record_task_completion) {
-        const nextDecision = event.record_task_completion.next_node_decision || "continue";
-        const ledger = event.record_task_completion.ledger || [];
+        const recordData = event.record_task_completion;
+        const nextDecision = recordData.next_node_decision || "continue";
+        const ledger = recordData.ledger || [];
         const completedTask = ledger.length > 0 ? ledger[0].description : "Unknown task";
         processedEvent = {
           title: "Task Completion Recorded",
@@ -129,31 +165,36 @@ export default function App() {
             : `Task completed: ${completedTask}. Moving to next task.`,
         };
         eventProcessed = true;
-      } else if (event.finalize_answer) {
+      } else if (event.generate_final_report) {
         processedEvent = {
           title: "Finalizing Answer",
           data: "Composing and presenting the final answer.",
         };
         hasFinalizeEventOccurredRef.current = true;
         eventProcessed = true;
+      } else if (event.final_report_generation) {
+        const reportStatus = event.final_report_generation.report_status || "processing";
+        const reportContent = event.final_report_generation.final_report;
+        const statusMessages = {
+          "completed": "Final report generated successfully",
+          "error": "Error generating final report",
+          "processing": "Composing and presenting the final answer..."
+        };
+        processedEvent = {
+          title: "Final Report Generation", 
+          data: statusMessages[reportStatus] || "Generating final report...",
+        };
+        
+        // 如果有报告内容，存储并显示
+        if (reportContent) {
+          setFinalReport(reportContent);
+          setShowReport(true);
+        }
+        
+        hasFinalizeEventOccurredRef.current = true;
+        eventProcessed = true;
       }
       
-      // 🐛 DEBUG: 检查是否有未处理的事件
-      if (!eventProcessed) {
-        console.warn("⚠️ 未处理的事件类型:", {
-          eventKeys: Object.keys(event),
-          eventData: event,
-          possibleMissingHandlers: [
-            "record_task_completion",
-            "content_enhancement", 
-            "should_enhance_content",
-            "decide_next_research_step",
-            "decide_next_step_in_plan"
-          ]
-        });
-      } else {
-        console.log("✅ 事件已处理:", processedEvent?.title);
-      }
       
       if (processedEvent) {
         setProcessedEventsTimeline((prevEvents) => [
@@ -163,84 +204,6 @@ export default function App() {
       }
     },
   });
-
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector(
-        "[data-radix-scroll-area-viewport]"
-      );
-      if (scrollViewport) {
-        scrollViewport.scrollTop = scrollViewport.scrollHeight;
-      }
-    }
-  }, [filteredMessages]);
-
-  useEffect(() => {
-    if (
-      hasFinalizeEventOccurredRef.current &&
-      !thread.isLoading &&
-      filteredMessages.length > 0
-    ) {
-      const lastMessage = filteredMessages[filteredMessages.length - 1];
-      if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
-        setHistoricalActivities((prev) => ({
-          ...prev,
-          [lastMessage.id!]: [...processedEventsTimeline],
-        }));
-      }
-      hasFinalizeEventOccurredRef.current = false;
-    }
-  }, [filteredMessages, thread.isLoading, processedEventsTimeline]);
-
-  const handleSubmit = useCallback(
-    (submittedInputValue: string, effort: string, model: string) => {
-      if (!submittedInputValue.trim()) return;
-      setProcessedEventsTimeline([]);
-      hasFinalizeEventOccurredRef.current = false;
-
-      // convert effort to, initial_search_query_count and max_research_loops
-      // low means max 1 loop and 1 query
-      // medium means max 3 loops and 3 queries
-      // high means max 10 loops and 5 queries
-      let initial_search_query_count = 0;
-      let max_research_loops = 0;
-      switch (effort) {
-        case "low":
-          initial_search_query_count = 1;
-          max_research_loops = 1;
-          break;
-        case "medium":
-          initial_search_query_count = 3;
-          max_research_loops = 3;
-          break;
-        case "high":
-          initial_search_query_count = 5;
-          max_research_loops = 10;
-          break;
-      }
-
-      const newMessages: Message[] = [
-        ...(filteredMessages || []),
-        {
-          type: "human",
-          content: submittedInputValue,
-          id: Date.now().toString(),
-        },
-      ];
-      thread.submit({
-        messages: newMessages,
-        initial_search_query_count: initial_search_query_count,
-        max_research_loops: max_research_loops,
-        reasoning_model: model,
-      });
-    },
-    [thread]
-  );
-
-  const handleCancel = useCallback(() => {
-    thread.stop();
-    window.location.reload();
-  }, [thread]);
 
   // 🎯 NEW: 过滤消息，只显示用户输入和最终报告
   const filteredMessages = useMemo(() => {
@@ -271,21 +234,82 @@ export default function App() {
     });
   }, [thread.messages]);
 
-  console.log("🎯 消息过滤:", {
-    total: thread.messages?.length || 0,
-    filtered: filteredMessages.length,
-    isLoading: thread.isLoading
-  });
+  useEffect(() => {
+    if (scrollAreaRef.current) {
+      const scrollViewport = scrollAreaRef.current.querySelector(
+        "[data-radix-scroll-area-viewport]"
+      );
+      if (scrollViewport) {
+        scrollViewport.scrollTop = scrollViewport.scrollHeight;
+      }
+    }
+  }, [filteredMessages]);
+
+  useEffect(() => {
+    if (
+      hasFinalizeEventOccurredRef.current &&
+      !thread.isLoading &&
+      filteredMessages.length > 0
+    ) {
+      const lastMessage = filteredMessages[filteredMessages.length - 1];
+      if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
+        setHistoricalActivities((prev) => ({
+          ...prev,
+          [lastMessage.id!]: [...processedEventsTimeline],
+        }));
+      }
+      hasFinalizeEventOccurredRef.current = false;
+    }
+  }, [filteredMessages, thread.isLoading, processedEventsTimeline]);
+
+  const handleSubmit = useCallback(
+    (submittedInputValue: string) => {
+      if (!submittedInputValue.trim()) return;
+      setProcessedEventsTimeline([]);
+      setFinalReport("");
+      setShowReport(false);
+      hasFinalizeEventOccurredRef.current = false;
+
+      const newMessages: Message[] = [
+        ...(filteredMessages || []),
+        {
+          type: "human",
+          content: submittedInputValue,
+          id: Date.now().toString(),
+        },
+      ];
+      
+      // 使用open_deep_research的默认配置，不需要前端指定
+      thread.submit({
+        messages: newMessages,
+        configurable: {
+          allow_clarification: false,  // 跳过澄清步骤，直接开始研究
+          search_api: "tavily",  // 确保使用tavily搜索
+          max_researcher_iterations: 2,  // 限制研究迭代次数
+          max_concurrent_research_units: 1  // 限制并发研究单元
+        }
+      });
+    },
+    [thread, filteredMessages]
+  );
+
+  const handleCancel = useCallback(() => {
+    thread.stop();
+    window.location.reload();
+  }, [thread]);
 
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
-      <main className="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
+      {/* Left Panel - Chat Interface */}
+      <main className={`flex flex-col overflow-hidden transition-all duration-300 ${
+        showReport ? "w-1/2" : "flex-1 max-w-4xl mx-auto"
+      }`}>
         <div
           className={`flex-1 overflow-y-auto ${
             filteredMessages.length === 0 && !thread.isLoading && processedEventsTimeline.length === 0 ? "flex" : ""
           }`}
         >
-          {filteredMessages.length === 0 && !thread.isLoading && processedEventsTimeline.length === 0 ? (
+          {filteredMessages.length === 0 && processedEventsTimeline.length === 0 ? (
             <WelcomeScreen
               handleSubmit={handleSubmit}
               isLoading={thread.isLoading}
@@ -304,6 +328,16 @@ export default function App() {
           )}
         </div>
       </main>
+      
+      {/* Right Panel - Report Viewer */}
+      {showReport && (
+        <div className="w-1/2 bg-neutral-800">
+          <ReportViewer 
+            content={finalReport} 
+            onClose={() => setShowReport(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
