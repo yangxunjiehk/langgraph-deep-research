@@ -246,11 +246,11 @@ const TaskCard: React.FC<TaskCardProps> = ({
   getStatusIcon,
   getStatusColor
 }) => {
-  console.log(`📋 TaskCard渲染: ${task.taskId}`, {
-    stepsCount: task.steps.length,
-    isExpanded,
-    steps: task.steps.map(s => ({ type: s.type, title: s.title, hasDetails: !!(s.details && s.details.length > 0) }))
-  });
+  // console.log(`📋 TaskCard渲染: ${task.taskId}`, {
+  //   stepsCount: task.steps.length,
+  //   isExpanded,
+  //   steps: task.steps.map(s => ({ type: s.type, title: s.title, hasDetails: !!(s.details && s.details.length > 0) }))
+  // });
 
   return (
     <div className="bg-neutral-800 rounded-lg border border-neutral-700">

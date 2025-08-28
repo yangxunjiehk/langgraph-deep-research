@@ -10,7 +10,10 @@
       "Bash(curl:*)",
       "Bash(langgraph assistants:*)",
       "Bash(langgraph dev:*)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:langchain-ai.github.io)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:docs.langchain.com)"
     ],
     "deny": [],
     "ask": [],

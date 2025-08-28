@@ -37,15 +37,15 @@ export default function App() {
     apiUrl: import.meta.env.DEV
       ? "http://127.0.0.1:2024"
       : "http://localhost:8123",
-    assistantId: "Deep Researcher Flat", // 使用新的扁平图
+    assistantId: "Deep Researcher", // 切换回原始的两层结构图
     messagesKey: "messages",
     streamSubgraphs: true, // 启用子图流式传输以接收嵌套图事件
     onFinish: (state) => {
       console.log(state);
     },
     onUpdateEvent: (event: StreamEvent) => {
-      // 🐛 DEBUG: 完整事件日志
-      console.log("📨 收到事件:", event);
+      // 只记录关键事件，减少日志噪音
+      // console.log("📨 收到事件:", event);
       
       // 🔧 NEW: 检查是否为子图事件
       const isSubgraphEvent = event.namespace || event.ns;
@@ -82,7 +82,7 @@ export default function App() {
       if (allEvents.length % 5 === 0) {
         try {
           const transformedData = transformEventsToHierarchy(allEvents, thread.messages || []);
-          console.log("🔍 数据转换器测试结果:");
+          // console.log("🔍 数据转换器测试结果:");
           debugTransformResult(transformedData);
         } catch (error) {
           console.warn("⚠️ 数据转换器测试失败:", error);
@@ -91,6 +91,23 @@ export default function App() {
       
       let processedEvent: ProcessedEvent | null = null;
       let eventProcessed = false;
+      
+      // 🎯 NEW: 步骤映射 - 定义详细的步骤顺序
+      const detailedStepSequence = [
+        { currentTitle: "Clarifying Requirements", nextTitle: "Writing Research Brief" },
+        { currentTitle: "Writing Research Brief", nextTitle: "搜索资料" },
+        { currentTitle: "Planning Research", nextTitle: "搜索资料" },
+        { currentTitle: "搜索资料", nextTitle: "分析搜索结果" },
+        { currentTitle: "Web Search", nextTitle: "分析搜索结果" },
+        { currentTitle: "Performing Web Searches", nextTitle: "分析搜索结果" },
+        { currentTitle: "Tavily Search", nextTitle: "分析搜索结果" },
+        { currentTitle: "分析搜索结果", nextTitle: "生成报告" },
+        { currentTitle: "Analyzing Search Results", nextTitle: "生成报告" },
+        { currentTitle: "Research Supervision", nextTitle: "Generating Final Report" },
+        { currentTitle: "Compressing Research Data", nextTitle: "Generating Final Report" },
+        { currentTitle: "生成报告", nextTitle: null },
+        { currentTitle: "Generating Final Report", nextTitle: null }
+      ];
       
       // 🔧 NEW: 处理子图事件（带namespace的事件）
       if (isSubgraphEvent) {
@@ -188,7 +205,7 @@ export default function App() {
         eventProcessed = true;
       } else if (event.researcher_tools) {
         // 检查是否有工具调用的详细信息
-        console.log("🔍 Researcher Tools 事件详细信息:", event.researcher_tools);
+        // console.log("🔍 Researcher Tools 事件详细信息:", event.researcher_tools);
         
         // 尝试从事件中提取更具体的信息
         const toolsData = event.researcher_tools as any;
@@ -320,6 +337,43 @@ export default function App() {
           data: "Analyzing and summarizing collected research information...",
         };
         eventProcessed = true;
+      } else if (event.current_step) {
+        // 🆕 处理实时步骤状态更新
+        const stepName = event.current_step as string;
+        // console.log("🚀 实时步骤状态更新:", stepName);
+        
+        if (stepName === 'web_search_started') {
+          // console.log("🚀 检测到 web_search_started 事件！");
+          processedEvent = {
+            title: "🔍 Web Search - Starting",
+            data: "正在执行 Tavily 搜索...",
+          };
+        } else if (stepName === 'web_search_completed') {
+          processedEvent = {
+            title: "🔍 Web Search - Completed",
+            data: "Tavily web search has been completed successfully.",
+          };
+        } else if (stepName === 'search_analysis_started') {
+          processedEvent = {
+            title: "📊 Search Analysis - Starting",
+            data: "正在分析搜索结果...",
+          };
+        } else if (stepName === 'search_analysis_completed') {
+          processedEvent = {
+            title: "📊 Search Analysis - Completed", 
+            data: "Search results analysis has been completed successfully.",
+          };
+        } else if (stepName.includes('_in_progress')) {
+          const baseName = stepName.replace('_in_progress', '');
+          processedEvent = {
+            title: `⏳ ${baseName} - In Progress`,
+            data: `${baseName} is currently being executed...`,
+          };
+        }
+        
+        if (processedEvent) {
+          eventProcessed = true;
+        }
       } else if (event.generate_final_report || event.final_report_generation) {
         processedEvent = {
           title: "Generating Final Report",
@@ -339,7 +393,7 @@ export default function App() {
           };
           eventProcessed = true;
         } else if (event.web_research) {
-          console.log("🔍 Web Research 事件详细信息:", event.web_research);
+          // console.log("🔍 Web Research 事件详细信息:", event.web_research);
           
           const researchData = event.web_research as { sources_gathered?: SourceData[] };
           const sources = researchData.sources_gathered || [];
@@ -421,10 +475,34 @@ export default function App() {
       }
       
       if (processedEvent) {
-        console.log(`➕ 添加新事件到时间线: ${processedEvent.title}`);
+        // console.log(`➕ 添加新事件到时间线: ${processedEvent.title}`);
         setProcessedEventsTimeline((prevEvents) => {
-          const newEvents = [...prevEvents, processedEvent!];
-          console.log(`📋 更新后的事件时间线 (${newEvents.length}):`, newEvents.map(e => e.title));
+          const newEvents = [...prevEvents];
+          
+          // 添加当前完成的事件
+          newEvents.push(processedEvent!);
+          
+          // 🎯 NEW: 检查是否需要同时添加下一步开始的事件
+          const eventTitle = processedEvent!.title;
+          const currentStepInfo = detailedStepSequence.find(step => {
+            // 精确匹配或包含匹配
+            return eventTitle === step.currentTitle || 
+                   eventTitle.includes(step.currentTitle) ||
+                   step.currentTitle.includes(eventTitle.replace("🔍 ", "").replace("📊 ", ""));
+          });
+          
+          if (currentStepInfo && currentStepInfo.nextTitle) {
+            // 添加下一步"进行中"的事件
+            const nextStepEvent: ProcessedEvent = {
+              title: `${currentStepInfo.nextTitle}`,
+              data: `⏳ 进行中...`
+            };
+            
+            newEvents.push(nextStepEvent);
+            console.log(`🎯 自动添加下一步事件: ${nextStepEvent.title} - 进行中`);
+          }
+          
+          // console.log(`📋 更新后的事件时间线 (${newEvents.length}):`, newEvents.map(e => e.title));
           return newEvents;
         });
       }
@@ -514,20 +592,15 @@ export default function App() {
 
   // 新增：保存中间状态快照的函数
   const saveCurrentStateSnapshot = useCallback((stateName: string) => {
-    console.log(`📸 保存状态快照: ${stateName}`);
-    console.log(`📊 当前消息数量: ${thread.messages?.length || 0}`);
-    console.log(`📊 当前时间线事件数: ${processedEventsTimeline.length}`);
+    // console.log(`📸 保存状态快照: ${stateName}`);
+    // console.log(`📊 当前消息数量: ${thread.messages?.length || 0}`);
+    // console.log(`📊 当前时间线事件数: ${processedEventsTimeline.length}`);
     
     // 增加延迟时间，确保AI消息已创建
     setTimeout(() => {
-      console.log(`⏰ 延迟后检查消息: ${thread.messages?.length || 0}`);
+      // console.log(`⏰ 延迟后检查消息: ${thread.messages?.length || 0}`);
       if (thread.messages && thread.messages.length > 0) {
         const lastMessage = thread.messages[thread.messages.length - 1];
-        console.log(`📋 最后一条消息:`, { 
-          id: lastMessage.id, 
-          type: lastMessage.type, 
-          contentLength: typeof lastMessage.content === 'string' ? lastMessage.content.length : 'non-string'
-        });
         
         if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
           // 创建当前时间线的快照

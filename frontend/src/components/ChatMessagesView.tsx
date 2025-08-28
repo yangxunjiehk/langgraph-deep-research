@@ -197,24 +197,24 @@ const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
   const isLiveActivityForThisBubble = shouldShowLiveActivity;
 
   // 🔧 DEBUG: 简化调试信息
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`🎯 AiMessageBubble [${message.id?.slice(-8)}]:`, {
-      isLastMessage,
-      hasHistoricalActivity,
-      shouldShowLiveActivity,
-      activityCount: activityForThisBubble?.length || 0,
-      showingType: hasHistoricalActivity ? 'snapshot' : (shouldShowLiveActivity ? 'live' : 'none')
-    });
-  }
+  // if (process.env.NODE_ENV === 'development') {
+  //   console.log(`🎯 AiMessageBubble [${message.id?.slice(-8)}]:`, {
+  //     isLastMessage,
+  //     hasHistoricalActivity,
+  //     shouldShowLiveActivity,
+  //     activityCount: activityForThisBubble?.length || 0,
+  //     showingType: hasHistoricalActivity ? 'snapshot' : (shouldShowLiveActivity ? 'live' : 'none')
+  //   });
+  // }
 
   return (
     <div className={`relative break-words flex flex-col`}>
       {/* 🔧 DEBUG: 添加状态显示信息 */}
-      {process.env.NODE_ENV === 'development' && (
+      {/* {process.env.NODE_ENV === 'development' && (
         <div className="text-xs bg-blue-900 p-1 mb-2 rounded text-white">
           Message: {message.id} | Historical: {historicalActivity?.length || 0} | Live: {liveActivity?.length || 0} | Showing: {activityForThisBubble?.length || 0}
         </div>
-      )}
+      )} */}
       {/* 只在没有思考面板时显示活动时间线 */}
       {!showCompactTimeline && activityForThisBubble && activityForThisBubble.length > 0 && (
         <div className="mb-3 border-b border-neutral-700 pb-3 text-xs">
@@ -285,24 +285,15 @@ export function ChatMessagesView({
     try {
       // 从sessionStorage获取事件数据
       const storedEvents = JSON.parse(sessionStorage.getItem('research_events') || '[]') as EventData[];
+      
       if (storedEvents.length === 0) {
-        console.log("🔍 Think Panel: 没有存储的事件数据");
+        // console.log("🔍 Think Panel: 没有事件数据");
         return null;
       }
       
-      console.log(`🔍 Think Panel: 处理 ${storedEvents.length} 个事件`);
+      // 🎯 NEW: 使用固定3步骤工作流，直接处理后端事件
+      // console.log(`🔍 Think Panel: 处理 ${storedEvents.length} 个后端事件`);
       const result = transformEventsToHierarchy(storedEvents, messages || []);
-      console.log("🔍 Think Panel: 转换结果", {
-        tasksCount: result.tasks.length,
-        overallStatus: result.overallStatus,
-        currentTaskId: result.currentTaskId,
-        tasks: result.tasks.map(t => ({
-          id: t.taskId,
-          description: t.description,
-          stepsCount: t.steps.length,
-          steps: t.steps.map(s => ({ type: s.type, title: s.title, status: s.status }))
-        }))
-      });
       
       return result;
     } catch (error) {
