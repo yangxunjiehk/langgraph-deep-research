@@ -12,6 +12,8 @@ from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
 from google.genai import Client
 import tiktoken  # 需确保环境已安装 tiktoken
+from langchain_openai import AzureChatOpenAI
+from tavily import TavilyClient
 
 from agent.state import (
     OverallState,
@@ -43,11 +45,41 @@ from agent.enhanced_graph_nodes import (
 
 load_dotenv()
 
-if os.getenv("GEMINI_API_KEY") is None:
-    raise ValueError("GEMINI_API_KEY is not set")
+# 检查Azure OpenAI配置
+if os.getenv("AZURE_OPENAI_API_KEY") is None:
+    raise ValueError("AZURE_OPENAI_API_KEY is not set")
+if os.getenv("AZURE_OPENAI_ENDPOINT") is None:
+    raise ValueError("AZURE_OPENAI_ENDPOINT is not set")
 
-# Used for Google Search API
-genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
+# 检查Tavily搜索配置
+if os.getenv("TAVILY_API_KEY") is None:
+    print("[WARNING] TAVILY_API_KEY is not set, using placeholder")
+    
+# 创建Tavily客户端
+tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", "tvly-placeholder"))
+
+# Azure OpenAI辅助函数
+def get_azure_openai_llm(model_name: str, temperature: float = 0.3, max_retries: int = 2) -> AzureChatOpenAI:
+    """创建Azure OpenAI模型实例，支持动态模型部署映射"""
+    
+    # 根据模型名称选择对应的Azure部署
+    deployment_mapping = {
+        "gpt-4o": os.getenv("AZURE_OPENAI_GPT4O_DEPLOYMENT", "gpt-4o"),
+        "gpt-4.1": os.getenv("AZURE_OPENAI_GPT41_DEPLOYMENT", "gpt-4.1"), 
+        "gpt-4o-mini": os.getenv("AZURE_OPENAI_GPT4O_MINI_DEPLOYMENT", "gpt-4o-mini")
+    }
+    
+    deployment_name = deployment_mapping.get(model_name, model_name)
+    print(f"[MODEL] Using {model_name} with deployment: {deployment_name}")
+    
+    return AzureChatOpenAI(
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        azure_deployment=deployment_name,
+        openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        temperature=temperature,
+        max_retries=max_retries,
+    )
 
 
 # Nodes
@@ -59,12 +91,11 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
-    # init Gemini 2.0 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
+    # init Azure OpenAI
+    llm = get_azure_openai_llm(
+        model_name=configurable.query_generator_model,
         temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        max_retries=2
     )
     structured_llm = llm.with_structured_output(SearchQueryList)
 
@@ -135,60 +166,48 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
             research_topic=state["search_query"],
         )
 
-        # Uses the google genai client as the langchain client doesn't return grounding metadata
-        response = genai_client.models.generate_content(
-            model=configurable.query_generator_model,
-            contents=formatted_prompt,
-            config={
-                "tools": [{"google_search": {}}],
-                "temperature": 0,
-            },
-        )
-        
-        # Error handling for empty response
-        if not response.candidates or not response.candidates[0].grounding_metadata:
-            current_task_id = state.get("current_task_id", "unknown")
-            error_content = f"No results found for query: {state['search_query']}"
+        # 使用Tavily进行真实网络搜索
+        try:
+            print(f"[SEARCH] Performing Tavily search for: {state['search_query']}")
+            search_result = tavily_client.search(
+                query=state["search_query"],
+                max_results=5,
+                include_raw_content=True
+            )
             
-            detailed_finding = {
-                "task_id": current_task_id,
-                "query_id": state["id"],
-                "content": error_content,
-                "source": None,
-                "timestamp": datetime.now().isoformat()
-            }
+            print(f"[DEBUG] Tavily search result: {search_result}")  # 调试日志
             
-            task_specific_result = {
-                "task_id": current_task_id,
-                "content": error_content,
-                "sources": [],
-                "timestamp": datetime.now().isoformat()
-            }
+            sources_gathered = []
+            research_content_parts = []
             
-            return {
-                "sources_gathered": [],
-                "executed_search_queries": [state["search_query"]],
-                "web_research_result": [error_content],
-                "current_task_detailed_findings": [detailed_finding],
-                "task_specific_results": [task_specific_result]
-            }
-
-        # resolve the urls to short urls for saving tokens and time
-        resolved_urls = resolve_urls(
-            response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
-        )
-        
-        # Gets the citations and adds them to the generated text
-        citations = get_citations(response, resolved_urls)
-        modified_text = insert_citation_markers(response.text, citations)
-        sources_gathered = [item for citation in citations for item in citation["segments"]]
+            for result in search_result.get("results", []):
+                source = {
+                    "title": result.get("title", "No title"),
+                    "url": result.get("url", ""),
+                    "snippet": result.get("content", "")[:500]
+                }
+                sources_gathered.append(source)
+                
+                # 整合搜索结果内容
+                content = result.get("raw_content", result.get("content", ""))[:2000]  # 限制内容长度
+                research_content_parts.append(f"Source: {result.get('title', 'Unknown')}\nURL: {result.get('url', 'N/A')}\nContent: {content}\n")
+            
+            # 汇总搜索结果
+            response_text = f"Web research results for '{state['search_query']}':\n\n" + "\n---\n".join(research_content_parts)
+            print(f"[SEARCH] Found {len(sources_gathered)} sources")
+            
+        except Exception as e:
+            print(f"[ERROR] Tavily search failed: {str(e)}")
+            # 回退到基本响应
+            response_text = f"Search for '{state['search_query']}' encountered an error. Please try a different query."
+            sources_gathered = []
 
         # Create detailed findings entry with task ID
         current_task_id = state.get("current_task_id", "unknown")
         detailed_finding = {
             "task_id": current_task_id,
             "query_id": state["id"],
-            "content": modified_text,
+            "content": response_text,
             "source": sources_gathered[0] if sources_gathered else None,
             "timestamp": datetime.now().isoformat()
         }
@@ -196,7 +215,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
         # Add task-specific metadata to the research result
         task_specific_result = {
             "task_id": current_task_id,
-            "content": modified_text,
+            "content": response_text,
             "sources": sources_gathered,
             "timestamp": datetime.now().isoformat()
         }
@@ -204,7 +223,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
         return {
             "sources_gathered": sources_gathered,
             "executed_search_queries": [state["search_query"]],
-            "web_research_result": [modified_text],
+            "web_research_result": [response_text],
             "current_task_detailed_findings": [detailed_finding],
             "task_specific_results": [task_specific_result]
         }
@@ -295,11 +314,10 @@ def reflection(state: OverallState, config: RunnableConfig) -> OverallState:
             )
         
         # 初始化LLM
-        llm = ChatGoogleGenerativeAI(
-            model=reasoning_model,
+        llm = get_azure_openai_llm(
+            model_name=reasoning_model,
             temperature=1.0,
-            max_retries=3,  # 增加重试次数
-            api_key=os.getenv("GEMINI_API_KEY"),
+            max_retries=3
         )
         
         # 尝试结构化输出
@@ -489,11 +507,10 @@ def finalize_answer(state: OverallState, config: RunnableConfig) -> dict:
     """Generate the final research report by synthesizing all task findings, using batch generation for detailed content."""
     try:
         configurable = Configuration.from_runnable_config(config)
-        llm = ChatGoogleGenerativeAI(
-            model=configurable.reflection_model,
+        llm = get_azure_openai_llm(
+            model_name=configurable.answer_model,
             temperature=0.3,
-            max_retries=2,
-            api_key=os.getenv("GEMINI_API_KEY"),
+            max_retries=2
         )
         
         plan = state.get("plan", [])
@@ -840,11 +857,10 @@ def final_quality_check(content):
 def planner_node(state: OverallState, config: RunnableConfig) -> dict:
     """LangGraph node that generates a multi-step research plan based on the user's question."""
     configurable = Configuration.from_runnable_config(config)
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
+    llm = get_azure_openai_llm(
+        model_name=configurable.reflection_model,
         temperature=0.7,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        max_retries=2
     )
     structured_llm = llm.with_structured_output(ResearchPlan)
 
@@ -960,11 +976,10 @@ def _summarize_task_findings(task_description: str, web_results: List[str], conf
     context_to_summarize = "\n---\n".join(recent_results)
     
     configurable = Configuration.from_runnable_config(config)
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.reflection_model,
+    llm = get_azure_openai_llm(
+        model_name=configurable.reflection_model,
         temperature=0.3,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        max_retries=2
     )
     
     prompt = f"""Given the research task: "{task_description}"

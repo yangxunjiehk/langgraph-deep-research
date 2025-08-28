@@ -196,16 +196,16 @@ def should_enhance_content(state: OverallState) -> str:
     
     # 检查是否已经进行过增强（避免重复增强）
     if state.get("enhancement_status") in ["completed", "skipped"]:
-        print("⚠️ 跳过内容增强: 已经完成增强")
+        print("[WARNING] 跳过内容增强: 已经完成增强")
         return "continue_without_enhancement"
     
     # 检查当前发现数量（至少要有一些基础内容）
     current_findings = state.get("web_research_result", [])
     if len(current_findings) < 1:
-        print("⚠️ 跳过内容增强: 缺少基础研究内容")
+        print("[WARNING] 跳过内容增强: 缺少基础研究内容")
         return "continue_without_enhancement"
     
-    print("✅ 满足增强条件，进入内容增强分析")
+    print("[SUCCESS] 满足增强条件，进入内容增强分析")
     return "analyze_enhancement_need"
 
 
