@@ -175,7 +175,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
                 include_raw_content=True
             )
             
-            print(f"[DEBUG] Tavily search result: {search_result}")  # 调试日志
+            # print(f"[DEBUG] Tavily search result: {search_result}")  # 调试日志已注释
             
             sources_gathered = []
             research_content_parts = []
@@ -292,7 +292,7 @@ def reflection(state: OverallState, config: RunnableConfig) -> OverallState:
                     truncated_results.append(result_str[:remaining_chars] + "...[truncated]")
                 break
         
-        print(f"🔍 Reflection分析: {len(web_research_results)} 个结果，截断后 {len(truncated_results)} 个，{total_chars} 字符")
+        # print(f"[REFLECTION] {len(web_research_results)} 个结果，截断后 {len(truncated_results)} 个，{total_chars} 字符")
         
         formatted_prompt = reflection_instructions.format(
             current_date=current_date,
@@ -375,7 +375,7 @@ Important: Respond only with valid JSON."""
                     knowledge_gap="Analysis completed with available research data" if has_sufficient_results else "Limited research data available",
                     follow_up_queries=[] if has_sufficient_results else [f"additional information about {research_topic}"]
                 )
-                print(f"🛡️ 默认判断: sufficient={has_sufficient_results}, 基于{len(web_research_results)}个搜索结果")
+                # print(f"[FALLBACK] sufficient={has_sufficient_results}, 基于{len(web_research_results)}个搜索结果")
 
     except Exception as e:
         error_message = f"Reflection节点发生严重错误: {str(e)}"
@@ -586,7 +586,7 @@ IMPORTANT: Write only the Executive Summary content. No meta-commentary, no sect
             if not detailed_contents:
                 web_research_result = state.get("web_research_result", [])
                 detailed_contents = web_research_result
-                print(f"Warning: No task-specific results for {task_id}, using fallback web_research_result with {len(detailed_contents)} items")
+                # print(f"Warning: No task-specific results for {task_id}, using fallback web_research_result with {len(detailed_contents)} items")
             
             if not detailed_contents:
                 # If still no content, create a section with just the summary

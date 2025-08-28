@@ -181,13 +181,36 @@ const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
   handleCopy,
   copiedMessageId,
 }) => {
-  // Determine which activity events to show and if it's for a live loading message
-  const activityForThisBubble =
-    isLastMessage && isOverallLoading ? liveActivity : historicalActivity;
-  const isLiveActivityForThisBubble = isLastMessage && isOverallLoading;
+  // 🔧 IMPROVED: 改进活动显示逻辑 - 优先显示快照，避免闪现
+  // 1. 如果有历史活动快照，优先显示快照（避免闪现）
+  // 2. 只有最后一条消息且没有快照时，才显示实时活动
+  const hasHistoricalActivity = historicalActivity && historicalActivity.length > 0;
+  const shouldShowLiveActivity = isLastMessage && isOverallLoading && !hasHistoricalActivity;
+  
+  const activityForThisBubble = hasHistoricalActivity 
+    ? historicalActivity 
+    : (shouldShowLiveActivity ? liveActivity : []);
+  const isLiveActivityForThisBubble = shouldShowLiveActivity;
+
+  // 🔧 DEBUG: 简化调试信息
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`🎯 AiMessageBubble [${message.id?.slice(-8)}]:`, {
+      isLastMessage,
+      hasHistoricalActivity,
+      shouldShowLiveActivity,
+      activityCount: activityForThisBubble?.length || 0,
+      showingType: hasHistoricalActivity ? 'snapshot' : (shouldShowLiveActivity ? 'live' : 'none')
+    });
+  }
 
   return (
     <div className={`relative break-words flex flex-col`}>
+      {/* 🔧 DEBUG: 添加状态显示信息 */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="text-xs bg-blue-900 p-1 mb-2 rounded text-white">
+          Message: {message.id} | Historical: {historicalActivity?.length || 0} | Live: {liveActivity?.length || 0} | Showing: {activityForThisBubble?.length || 0}
+        </div>
+      )}
       {activityForThisBubble && activityForThisBubble.length > 0 && (
         <div className="mb-3 border-b border-neutral-700 pb-3 text-xs">
           <ActivityTimeline
