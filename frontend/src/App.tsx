@@ -23,7 +23,7 @@ export default function App() {
   >({});
   const [finalReport, setFinalReport] = useState<string>("");
   const [showReport, setShowReport] = useState<boolean>(false);
-  const [showHistoryList, setShowHistoryList] = useState<boolean>(false);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
   const savedReportsRef = useRef<Set<string>>(new Set()); // 防止重复保存
@@ -429,33 +429,28 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
-      {/* Left Panel - Report History (Optional) */}
-      {showHistoryList && (
-        <ReportHistoryList
-          onSelectReport={loadReport}
-          onDeleteReport={handleDeleteReport}
-          isVisible={showHistoryList}
-        />
-      )}
+      {/* Left Panel - Report History (Always present) */}
+      <ReportHistoryList
+        onSelectReport={loadReport}
+        onDeleteReport={handleDeleteReport}
+        isExpanded={isHistoryExpanded}
+        onToggle={() => setIsHistoryExpanded(!isHistoryExpanded)}
+      />
       
       {/* Middle Panel - Chat Interface */}
       <main className={`flex flex-col overflow-hidden ${
-        showHistoryList && showReport ? "w-1/3" : 
-        showHistoryList || showReport ? "w-2/3" : 
-        "flex-1 max-w-4xl mx-auto"
+        showReport 
+          ? isHistoryExpanded 
+            ? "flex-1" // 侧边栏展开 + 报告显示：填充剩余空间
+            : "flex-1" // 侧边栏收起 + 报告显示：填充剩余空间
+          : isHistoryExpanded
+            ? "flex-1 max-w-4xl mx-auto" // 侧边栏展开 + 无报告：居中限制宽度
+            : "flex-1 max-w-4xl mx-auto"  // 侧边栏收起 + 无报告：居中限制宽度
       }`}>
-        {/* Header with buttons */}
+        {/* Header */}
         <div className="p-4 border-b border-neutral-700 bg-neutral-900">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-center">
             <h1 className="text-lg font-semibold">深度研究助手</h1>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowHistoryList(!showHistoryList)}
-                className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 rounded text-sm"
-              >
-                {showHistoryList ? "隐藏历史" : "历史报告"}
-              </button>
-            </div>
           </div>
         </div>
 
@@ -487,11 +482,9 @@ export default function App() {
         </div>
       </main>
       
-      {/* Right Panel - Report Viewer */}
+      {/* Right Panel - Report Viewer - 固定宽度 */}
       {showReport && (
-        <div className={`bg-neutral-800 ${
-          showHistoryList ? "w-1/3" : "w-1/2"
-        }`}>
+        <div className="w-1/2 bg-neutral-800">
           <ReportViewer 
             content={finalReport} 
             onClose={() => setShowReport(false)}
