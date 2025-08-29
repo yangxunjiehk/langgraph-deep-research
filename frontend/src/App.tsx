@@ -5,6 +5,14 @@ import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { ChatMessagesView } from "@/components/ChatMessagesView";
 import { ReportViewer } from "@/components/ReportViewer";
+import { ReportHistoryList } from "@/components/ReportHistoryList";
+
+// 扩展Window类型
+declare global {
+  interface Window {
+    _pendingReport?: { content: string; timestamp: number };
+  }
+}
 
 export default function App() {
   const [processedEventsTimeline, setProcessedEventsTimeline] = useState<
@@ -15,8 +23,68 @@ export default function App() {
   >({});
   const [finalReport, setFinalReport] = useState<string>("");
   const [showReport, setShowReport] = useState<boolean>(false);
+  const [showHistoryList, setShowHistoryList] = useState<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
+  const savedReportsRef = useRef<Set<string>>(new Set()); // 防止重复保存
+
+  // 保存报告到数据库
+  const saveReport = useCallback(async (content: string, query: string) => {
+    try {
+      const response = await fetch('http://localhost:2025/api/reports/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: '', // 后端会从content中提取标题
+          content: content,
+          query: query,
+          research_time: 0, // 先设为0，避免复杂的时间计算
+          metadata: {
+            frontend_version: '1.0',
+            assistant_id: 'Deep Researcher New Lite'
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to save report: ${response.status} ${errorText}`);
+      }
+
+      const savedReport = await response.json();
+      console.log('✅ Report saved automatically:', savedReport.title);
+      return savedReport;
+    } catch (error) {
+      console.error('❌ Error saving report:', error);
+      throw error;
+    }
+  }, []);
+
+  // 从数据库加载报告
+  const loadReport = useCallback(async (reportId: number) => {
+    try {
+      const response = await fetch(`http://localhost:2025/api/reports/${reportId}`);
+      if (!response.ok) {
+        throw new Error('Failed to load report');
+      }
+
+      const report = await response.json();
+      setFinalReport(report.content);
+      setShowReport(true);
+      return report;
+    } catch (error) {
+      console.error('Error loading report:', error);
+      alert('加载报告失败');
+    }
+  }, []);
+
+  // 删除报告的回调
+  const handleDeleteReport = useCallback((reportId: number) => {
+    // 如果当前显示的是被删除的报告，则隐藏报告面板
+    // 可以添加后续的清理逻辑
+  }, []);
 
   const thread = useStream<{
     messages: Message[];
@@ -34,7 +102,26 @@ export default function App() {
       console.log(event);
     },
     onUpdateEvent: (event: any) => {
-      console.log("[DEBUG] Received event:", JSON.stringify(event, null, 2));  // 更详细的调试日志
+      // 检查是否有完整的values数据，用于保存待处理的报告
+      if (event.values && event.values.messages && event.values.final_report && window._pendingReport) {
+        const pendingReport = window._pendingReport;
+        const currentTime = Date.now();
+        
+        // 检查是否是最近的待处理报告（5分钟内）
+        if (currentTime - pendingReport.timestamp < 5 * 60 * 1000) {
+          // 提取用户查询
+          const eventMessages = event.values.messages;
+          const userMessage = eventMessages.find(m => m.type === "human");
+          
+          if (userMessage && typeof userMessage.content === 'string') {
+            const query = userMessage.content.trim();
+            const reportContent = event.values.final_report || pendingReport.content;
+            
+            saveReport(reportContent, query).catch(console.error);
+            delete window._pendingReport; // 清除待处理报告
+          }
+        }
+      }
       
       let processedEvent: ProcessedEvent | null = null;
       let eventProcessed = false;
@@ -189,6 +276,36 @@ export default function App() {
         if (reportContent) {
           setFinalReport(reportContent);
           setShowReport(true);
+          
+          // 自动保存报告到数据库 - 从event中提取数据
+          let query = '';
+          
+          // 尝试从event.values.messages中获取用户查询
+          if (event.values && event.values.messages) {
+            const eventMessages = event.values.messages;
+            const userMessage = eventMessages.find(m => m.type === "human");
+            
+            if (userMessage && typeof userMessage.content === 'string') {
+              query = userMessage.content;
+            }
+          }
+          
+          // 如果event中没有找到，再尝试thread.messages
+          if (!query) {
+            const allMessages = thread.messages || [];
+            const userMessages = allMessages.filter(m => m.type === "human");
+            const lastUserMessage = userMessages[userMessages.length - 1];
+            if (lastUserMessage && typeof lastUserMessage.content === 'string') {
+              query = lastUserMessage.content;
+            }
+          }
+          
+          if (query) {
+            saveReport(reportContent, query).catch(console.error);
+          } else {
+            // 临时保存报告内容，稍后在有完整数据时保存
+            window._pendingReport = { content: reportContent, timestamp: Date.now() };
+          }
         }
         
         hasFinalizeEventOccurredRef.current = true;
@@ -252,6 +369,22 @@ export default function App() {
         const content = typeof lastAiMessage.content === "string" ? lastAiMessage.content : "";
         if (content.includes("# ") && content.length > 500) {
           setFinalReport(content);
+          
+          // 在这里尝试自动保存报告 - 此时thread.messages应该有完整数据
+          const allMessages = thread.messages || [];
+          const userMessages = allMessages.filter(m => m.type === "human");
+          const lastUserMessage = userMessages[userMessages.length - 1];
+          
+          if (lastUserMessage && typeof lastUserMessage.content === 'string') {
+            const query = lastUserMessage.content.trim();
+            const reportHash = content.slice(0, 100) + query.slice(0, 50); // 简单的hash
+            
+            // 检查是否已经保存过
+            if (!savedReportsRef.current.has(reportHash)) {
+              savedReportsRef.current.add(reportHash);
+              saveReport(content, query).catch(console.error);
+            }
+          }
         }
       }
       hasFinalizeEventOccurredRef.current = false;
@@ -296,10 +429,36 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
-      {/* Left Panel - Chat Interface */}
+      {/* Left Panel - Report History (Optional) */}
+      {showHistoryList && (
+        <ReportHistoryList
+          onSelectReport={loadReport}
+          onDeleteReport={handleDeleteReport}
+          isVisible={showHistoryList}
+        />
+      )}
+      
+      {/* Middle Panel - Chat Interface */}
       <main className={`flex flex-col overflow-hidden ${
-        showReport ? "w-1/2" : "flex-1 max-w-4xl mx-auto"
+        showHistoryList && showReport ? "w-1/3" : 
+        showHistoryList || showReport ? "w-2/3" : 
+        "flex-1 max-w-4xl mx-auto"
       }`}>
+        {/* Header with buttons */}
+        <div className="p-4 border-b border-neutral-700 bg-neutral-900">
+          <div className="flex justify-between items-center">
+            <h1 className="text-lg font-semibold">深度研究助手</h1>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowHistoryList(!showHistoryList)}
+                className="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 rounded text-sm"
+              >
+                {showHistoryList ? "隐藏历史" : "历史报告"}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div
           className={`flex-1 overflow-y-auto ${
             filteredMessages.length === 0 && !thread.isLoading && processedEventsTimeline.length === 0 ? "flex" : ""
@@ -330,7 +489,9 @@ export default function App() {
       
       {/* Right Panel - Report Viewer */}
       {showReport && (
-        <div className="w-1/2 bg-neutral-800">
+        <div className={`bg-neutral-800 ${
+          showHistoryList ? "w-1/3" : "w-1/2"
+        }`}>
           <ReportViewer 
             content={finalReport} 
             onClose={() => setShowReport(false)}
