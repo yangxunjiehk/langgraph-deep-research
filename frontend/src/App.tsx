@@ -28,7 +28,7 @@ export default function App() {
     apiUrl: import.meta.env.DEV
       ? "http://localhost:2024"
       : "http://localhost:8123",
-    assistantId: "Deep Researcher New",  // 切换到deep_researcher_new后端
+    assistantId: "Deep Researcher New Lite",  // 切换到deep_researcher_new_lite后端 - 快速开发测试
     messagesKey: "messages",
     onFinish: (event: any) => {
       console.log(event);
@@ -205,32 +205,13 @@ export default function App() {
     },
   });
 
-  // 🎯 NEW: 过滤消息，只显示用户输入和最终报告
+  // 🎯 FIXED: 只显示用户消息，隐藏AI的中间消息
   const filteredMessages = useMemo(() => {
     if (!thread.messages) return [];
     
-    return thread.messages.filter((message, index) => {
-      // 始终显示用户消息
-      if (message.type === "human") {
-        return true;
-      }
-      
-      // 对于AI消息，只显示包含最终报告的消息
-      if (message.type === "ai") {
-        const content = typeof message.content === "string" ? message.content : "";
-        
-        // 检查是否是最终报告（通常包含完整的研究报告标题和结构）
-        const isFinalReport = content.includes("# ") && 
-                             content.length > 500 && // 最终报告通常很长
-                             (content.includes("## Executive Summary") || 
-                              content.includes("## Strategic Implications") ||
-                              content.includes("## 执行摘要") ||
-                              content.includes("## 战略建议"));
-        
-        return isFinalReport;
-      }
-      
-      return false;
+    // 只返回用户消息
+    return thread.messages.filter((message) => {
+      return message.type === "human";
     });
   }, [thread.messages]);
 
@@ -249,18 +230,33 @@ export default function App() {
     if (
       hasFinalizeEventOccurredRef.current &&
       !thread.isLoading &&
-      filteredMessages.length > 0
+      thread.messages && thread.messages.length > 0
     ) {
-      const lastMessage = filteredMessages[filteredMessages.length - 1];
-      if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
-        setHistoricalActivities((prev) => ({
-          ...prev,
-          [lastMessage.id!]: [...processedEventsTimeline],
-        }));
+      // 查找最后一条AI消息（从所有消息中，而不是过滤后的消息）
+      const aiMessages = thread.messages.filter(m => m.type === "ai");
+      const lastAiMessage = aiMessages[aiMessages.length - 1];
+      
+      if (lastAiMessage && lastAiMessage.id) {
+        // 将进度活动关联到最后一条用户消息（而不是AI消息）
+        const userMessages = thread.messages.filter(m => m.type === "human");
+        const lastUserMessage = userMessages[userMessages.length - 1];
+        
+        if (lastUserMessage && lastUserMessage.id) {
+          setHistoricalActivities((prev) => ({
+            ...prev,
+            [lastUserMessage.id!]: [...processedEventsTimeline],
+          }));
+        }
+        
+        // 如果最后一条AI消息包含报告内容，也要设置finalReport
+        const content = typeof lastAiMessage.content === "string" ? lastAiMessage.content : "";
+        if (content.includes("# ") && content.length > 500) {
+          setFinalReport(content);
+        }
       }
       hasFinalizeEventOccurredRef.current = false;
     }
-  }, [filteredMessages, thread.isLoading, processedEventsTimeline]);
+  }, [thread.messages, thread.isLoading, processedEventsTimeline]);
 
   const handleSubmit = useCallback(
     (submittedInputValue: string) => {
@@ -301,7 +297,7 @@ export default function App() {
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
       {/* Left Panel - Chat Interface */}
-      <main className={`flex flex-col overflow-hidden transition-all duration-300 ${
+      <main className={`flex flex-col overflow-hidden ${
         showReport ? "w-1/2" : "flex-1 max-w-4xl mx-auto"
       }`}>
         <div
@@ -324,6 +320,9 @@ export default function App() {
               onCancel={handleCancel}
               liveActivityEvents={processedEventsTimeline}
               historicalActivities={historicalActivities}
+              showReport={showReport}
+              onToggleReport={() => setShowReport(!showReport)}
+              hasReport={finalReport.length > 0}
             />
           )}
         </div>

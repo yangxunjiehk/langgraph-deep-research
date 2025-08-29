@@ -1,5 +1,5 @@
 import ReactMarkdown from "react-markdown";
-import { ScrollArea } from "@radix-ui/react-scroll-area";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { X } from "lucide-react";
 
 interface ReportViewerProps {
@@ -23,8 +23,9 @@ export function ReportViewer({ content, onClose }: ReportViewerProps) {
       </div>
       
       {/* Report Content */}
-      <ScrollArea className="flex-1 p-4">
-        <div className="prose prose-invert prose-neutral max-w-none">
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="p-4 prose prose-invert prose-neutral max-w-none">
           <ReactMarkdown
             className="text-neutral-200 leading-relaxed"
             components={{
@@ -98,8 +99,9 @@ export function ReportViewer({ content, onClose }: ReportViewerProps) {
           >
             {content}
           </ReactMarkdown>
-        </div>
-      </ScrollArea>
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 }

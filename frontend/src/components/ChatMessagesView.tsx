@@ -12,6 +12,7 @@ import {
   ActivityTimeline,
   ProcessedEvent,
 } from "@/components/ActivityTimeline"; // Assuming ActivityTimeline is in the same dir or adjust path
+import { ReportGeneratedNotification } from "@/components/ReportGeneratedNotification";
 
 // Markdown component props type from former ReportView
 type MdComponentProps = {
@@ -168,6 +169,9 @@ interface AiMessageBubbleProps {
   mdComponents: typeof mdComponents;
   handleCopy: (text: string, messageId: string) => void;
   copiedMessageId: string | null;
+  showReport?: boolean;
+  onToggleReport?: () => void;
+  hasReport?: boolean;
 }
 
 // AiMessageBubble Component
@@ -180,37 +184,26 @@ const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
   mdComponents,
   handleCopy,
   copiedMessageId,
+  showReport,
+  onToggleReport,
+  hasReport,
 }) => {
-  // 🔧 IMPROVED: 改进活动显示逻辑 - 优先显示快照，避免闪现
-  // 1. 如果有历史活动快照，优先显示快照（避免闪现）
-  // 2. 只有最后一条消息且没有快照时，才显示实时活动
+  // 🔧 FIXED: 修复活动显示逻辑 - 确保进度组件始终显示
+  // 1. 如果有历史活动快照，始终显示快照（无论是否最后一条消息）
+  // 2. 如果是最后一条消息且在加载中，显示实时活动
+  // 3. 优先显示历史活动，其次显示实时活动
   const hasHistoricalActivity = historicalActivity && historicalActivity.length > 0;
   const shouldShowLiveActivity = isLastMessage && isOverallLoading && !hasHistoricalActivity;
+  const shouldShowHistoricalActivity = hasHistoricalActivity; // 只要有历史活动就显示
   
-  const activityForThisBubble = hasHistoricalActivity 
+  const activityForThisBubble = shouldShowHistoricalActivity 
     ? historicalActivity 
     : (shouldShowLiveActivity ? liveActivity : []);
   const isLiveActivityForThisBubble = shouldShowLiveActivity;
 
-  // 🔧 DEBUG: 简化调试信息
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`🎯 AiMessageBubble [${message.id?.slice(-8)}]:`, {
-      isLastMessage,
-      hasHistoricalActivity,
-      shouldShowLiveActivity,
-      activityCount: activityForThisBubble?.length || 0,
-      showingType: hasHistoricalActivity ? 'snapshot' : (shouldShowLiveActivity ? 'live' : 'none')
-    });
-  }
 
   return (
     <div className={`relative break-words flex flex-col`}>
-      {/* 🔧 DEBUG: 添加状态显示信息 */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="text-xs bg-blue-900 p-1 mb-2 rounded text-white">
-          Message: {message.id} | Historical: {historicalActivity?.length || 0} | Live: {liveActivity?.length || 0} | Showing: {activityForThisBubble?.length || 0}
-        </div>
-      )}
       {activityForThisBubble && activityForThisBubble.length > 0 && (
         <div className="mb-3 border-b border-neutral-700 pb-3 text-xs">
           <ActivityTimeline
@@ -219,6 +212,15 @@ const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
           />
         </div>
       )}
+      
+      {/* 报告生成通知 */}
+      {hasReport && isLastMessage && onToggleReport && (
+        <ReportGeneratedNotification
+          showReport={showReport || false}
+          onToggleReport={onToggleReport}
+        />
+      )}
+      
       <ReactMarkdown components={mdComponents}>
         {typeof message.content === "string"
           ? message.content
@@ -251,6 +253,9 @@ interface ChatMessagesViewProps {
   onCancel: () => void;
   liveActivityEvents: ProcessedEvent[];
   historicalActivities: Record<string, ProcessedEvent[]>;
+  showReport?: boolean;
+  onToggleReport?: () => void;
+  hasReport?: boolean;
 }
 
 export function ChatMessagesView({
@@ -261,6 +266,9 @@ export function ChatMessagesView({
   onCancel,
   liveActivityEvents,
   historicalActivities,
+  showReport,
+  onToggleReport,
+  hasReport,
 }: ChatMessagesViewProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
@@ -280,6 +288,13 @@ export function ChatMessagesView({
         <div className="p-4 md:p-6 space-y-2 max-w-4xl mx-auto pt-16">
           {messages.map((message, index) => {
             const isLast = index === messages.length - 1;
+            const isHuman = message.type === "human";
+            
+            // 获取该用户消息关联的历史活动
+            const userHistoricalActivity = isHuman ? historicalActivities[message.id!] : undefined;
+            const shouldShowActivityForUser = isHuman && userHistoricalActivity && userHistoricalActivity.length > 0;
+            const shouldShowReportButton = isHuman && isLast && hasReport && !isLoading;
+            
             return (
               <div key={message.id || `msg-${index}`} className="space-y-3">
                 <div
@@ -302,9 +317,32 @@ export function ChatMessagesView({
                       mdComponents={mdComponents}
                       handleCopy={handleCopy}
                       copiedMessageId={copiedMessageId}
+                      showReport={showReport}
+                      onToggleReport={onToggleReport}
+                      hasReport={hasReport}
                     />
                   )}
                 </div>
+                
+                {/* 在用户消息下方显示进度和报告按钮 */}
+                {isHuman && (
+                  <>
+                    {shouldShowActivityForUser && (
+                      <div className="mt-3 mb-3 border-b border-neutral-700 pb-3 text-xs">
+                        <ActivityTimeline
+                          processedEvents={userHistoricalActivity}
+                          isLoading={false}
+                        />
+                      </div>
+                    )}
+                    {shouldShowReportButton && (
+                      <ReportGeneratedNotification
+                        showReport={showReport || false}
+                        onToggleReport={onToggleReport!}
+                      />
+                    )}
+                  </>
+                )}
               </div>
             );
           })}
