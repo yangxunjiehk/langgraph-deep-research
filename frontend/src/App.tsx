@@ -102,6 +102,8 @@ export default function App() {
       console.log(event);
     },
     onUpdateEvent: (event: any) => {
+      console.log("[Frontend] Received event:", JSON.stringify(event, null, 2));
+      
       // 检查是否有完整的values数据，用于保存待处理的报告
       if (event.values && event.values.messages && event.values.final_report && window._pendingReport) {
         const pendingReport = window._pendingReport;
@@ -125,19 +127,39 @@ export default function App() {
       
       let processedEvent: ProcessedEvent | null = null;
       let eventProcessed = false;
+      
+      // 特殊处理clarify_with_user节点
       if (event.clarify_with_user) {
         const clarifyStatus = event.clarify_with_user.clarify_status || "processing";
-        const statusMessages = {
-          "skipped": "Skipping clarification as requested",
-          "needs_clarification": "Requesting user clarification",
-          "completed": "User requirements clarified successfully",
-          "processing": "Processing user requirements"
-        };
-        processedEvent = {
-          title: "User Clarification",
-          data: statusMessages[clarifyStatus] || `Status: ${clarifyStatus}`,
-        };
-        eventProcessed = true;
+        
+        // 如果需要澄清，应该将消息显示在对话窗口而不是进展中
+        if (clarifyStatus === "needs_clarification") {
+          // 检查是否有messages字段包含AI的澄清问题
+          if (event.clarify_with_user.messages && event.clarify_with_user.messages.length > 0) {
+            const aiMessage = event.clarify_with_user.messages[0];
+            if (aiMessage && aiMessage.content) {
+              // 这里应该将AI消息添加到thread.messages中显示
+              // 但由于useStream的限制，我们暂时只能通过其他方式处理
+              console.log("[Clarify] AI asking for clarification:", aiMessage.content);
+            }
+          }
+          // 不创建进展事件，让消息正常显示
+          eventProcessed = false;
+        } else if (clarifyStatus === "skipped" || clarifyStatus === "skipped_lite") {
+          // 跳过澄清，开始研究 - 创建一个简单的进展事件
+          processedEvent = {
+            title: "Starting Research",
+            data: "Proceeding with research task...",
+          };
+          eventProcessed = true;
+        } else if (clarifyStatus === "completed" || clarifyStatus === "completed_lite") {
+          // 澄清完成，准备开始研究
+          processedEvent = {
+            title: "Requirements Clarified",
+            data: "User requirements understood, starting research...",
+          };
+          eventProcessed = true;
+        }
       } else if (event.write_research_brief) {
         const briefStatus = event.write_research_brief.brief_status || "processing";
         const briefContent = event.write_research_brief.brief_content;
@@ -322,15 +344,42 @@ export default function App() {
     },
   });
 
-  // 🎯 FIXED: 只显示用户消息，隐藏AI的中间消息
+  // 🎯 修改：智能过滤消息 - 显示用户消息和澄清相关的AI消息
   const filteredMessages = useMemo(() => {
     if (!thread.messages) return [];
     
-    // 只返回用户消息
-    return thread.messages.filter((message) => {
-      return message.type === "human";
+    return thread.messages.filter((message, index) => {
+      // 始终显示用户消息
+      if (message.type === "human") {
+        return true;
+      }
+      
+      // 显示AI的澄清消息（通常是第一个AI回复，在研究开始前）
+      if (message.type === "ai") {
+        // 检查是否是澄清相关的消息（通常包含问号或特定关键词）
+        const content = typeof message.content === "string" ? message.content : "";
+        const isClarificationMessage = 
+          content.includes("?") || 
+          content.includes("clarify") || 
+          content.includes("请问") ||
+          content.includes("需要了解") ||
+          content.includes("想要研究") ||
+          content.includes("确认");
+        
+        // 如果是澄清消息，或者还没有开始真正的研究（没有进展事件），则显示
+        const hasResearchStarted = processedEventsTimeline.length > 0;
+        if (isClarificationMessage || !hasResearchStarted) {
+          // 但不显示最终报告（太长了）
+          if (content.includes("#") && content.length > 1000) {
+            return false;
+          }
+          return true;
+        }
+      }
+      
+      return false;
     });
-  }, [thread.messages]);
+  }, [thread.messages, processedEventsTimeline]);
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -408,11 +457,11 @@ export default function App() {
         },
       ];
       
-      // 使用open_deep_research的默认配置，不需要前端指定
+      // 使用open_deep_research的默认配置，允许澄清
       thread.submit({
         messages: newMessages,
         configurable: {
-          allow_clarification: false,  // 跳过澄清步骤，直接开始研究
+          allow_clarification: true,  // 允许澄清步骤，让AI可以询问澄清问题
           search_api: "tavily",  // 确保使用tavily搜索
           max_researcher_iterations: 2,  // 限制研究迭代次数
           max_concurrent_research_units: 1  // 限制并发研究单元

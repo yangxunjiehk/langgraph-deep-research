@@ -12,9 +12,19 @@
       "Bash(git checkout:*)",
       "Bash(npm ci:*)",
       "Bash(python:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Read(D:\\Workspace\\open_deep_research/**)",
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "D:\\Workspace\\open_deep_research"
+    ]
   }
 }
