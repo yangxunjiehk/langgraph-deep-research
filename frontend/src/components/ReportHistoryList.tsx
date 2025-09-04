@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Trash2, FileText, Clock, BarChart3, Menu, ChevronLeft } from 'lucide-react';
+import { Trash2, FileText, Clock, BarChart3, Menu, ChevronLeft, MessageCircle } from 'lucide-react';
 
 interface ReportItem {
   id: number;
@@ -16,9 +16,10 @@ interface ReportHistoryListProps {
   onDeleteReport?: (reportId: number) => void;
   isExpanded: boolean;
   onToggle: () => void;
+  onShowChatHistory: () => void;
 }
 
-export function ReportHistoryList({ onSelectReport, onDeleteReport, isExpanded, onToggle }: ReportHistoryListProps) {
+export function ReportHistoryList({ onSelectReport, onDeleteReport, isExpanded, onToggle, onShowChatHistory }: ReportHistoryListProps) {
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -96,16 +97,23 @@ export function ReportHistoryList({ onSelectReport, onDeleteReport, isExpanded, 
     <div className={`${isExpanded ? 'w-80' : 'w-12'} bg-neutral-900 border-r border-neutral-700 flex flex-col transition-all duration-300 ease-in-out overflow-hidden`}>
       {/* Header */}
       <div className="relative p-3 border-b border-neutral-700">
-        {/* 收起状态的按钮（始终存在） */}
-        <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 z-10 ${
+        {/* 收起状态的按钮组（始终存在） */}
+        <div className={`absolute inset-0 flex flex-col items-center justify-center gap-2 transition-opacity duration-300 z-10 ${
           !isExpanded ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}>
           <button
             onClick={onToggle}
             className="p-2 hover:bg-neutral-700 rounded text-neutral-400 hover:text-neutral-200"
-            title="展开历史报告"
+            title="展开研究报告"
           >
-            <Menu size={18} />
+            <FileText size={16} />
+          </button>
+          <button
+            onClick={onShowChatHistory}
+            className="p-2 hover:bg-neutral-700 rounded text-neutral-400 hover:text-neutral-200"
+            title="查看聊天记录"
+          >
+            <MessageCircle size={16} />
           </button>
         </div>
         

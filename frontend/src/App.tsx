@@ -1,11 +1,13 @@
 import { useStream } from "@langchain/langgraph-sdk/react";
 import type { Message } from "@langchain/langgraph-sdk";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { FileText, MessageCircle, ChevronLeft, Clock, BarChart3 } from 'lucide-react';
 import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { ChatMessagesView } from "@/components/ChatMessagesView";
 import { ReportViewer } from "@/components/ReportViewer";
 import { ReportHistoryList } from "@/components/ReportHistoryList";
+import { ChatHistoryList } from "@/components/ChatHistoryList";
 
 // 扩展Window类型
 declare global {
@@ -24,9 +26,31 @@ export default function App() {
   const [finalReport, setFinalReport] = useState<string>("");
   const [showReport, setShowReport] = useState<boolean>(false);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
+  const [isChatHistoryExpanded, setIsChatHistoryExpanded] = useState<boolean>(false);
+  const [activePanel, setActivePanel] = useState<'reports' | 'chats' | null>(null);
+  const [reports, setReports] = useState<any[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
   const savedReportsRef = useRef<Set<string>>(new Set()); // 防止重复保存
+
+  // 加载报告列表
+  const loadReports = useCallback(async () => {
+    setReportsLoading(true);
+    try {
+      const response = await fetch('http://localhost:2025/api/reports/');
+      if (!response.ok) {
+        throw new Error('Failed to load reports');
+      }
+      const reportsData = await response.json();
+      setReports(reportsData);
+    } catch (err) {
+      console.error('Error loading reports:', err);
+      setReports([]);
+    } finally {
+      setReportsLoading(false);
+    }
+  }, []);
 
   // 保存报告到数据库
   const saveReport = useCallback(async (content: string, query: string) => {
@@ -85,6 +109,45 @@ export default function App() {
     // 如果当前显示的是被删除的报告，则隐藏报告面板
     // 可以添加后续的清理逻辑
   }, []);
+
+  // 处理聊天记录选择
+  const handleSelectThread = useCallback((threadId: string) => {
+    console.log('Selected thread:', threadId);
+    // TODO: 实现恢复线程逻辑
+    // 这里需要使用 useStream 的相关方法来恢复thread
+  }, []);
+
+  // 处理面板切换
+  const handleShowReports = useCallback(() => {
+    setActivePanel('reports');
+    setIsHistoryExpanded(true);
+    setIsChatHistoryExpanded(false);
+    loadReports();
+  }, [loadReports]);
+
+  const handleShowChatHistory = useCallback(() => {
+    setActivePanel('chats');
+    setIsChatHistoryExpanded(true);
+    setIsHistoryExpanded(false);
+  }, []);
+
+  const handleToggleReports = useCallback(() => {
+    if (activePanel === 'reports' && isHistoryExpanded) {
+      setIsHistoryExpanded(false);
+      setActivePanel(null);
+    } else {
+      handleShowReports();
+    }
+  }, [activePanel, isHistoryExpanded, handleShowReports]);
+
+  const handleToggleChatHistory = useCallback(() => {
+    if (activePanel === 'chats' && isChatHistoryExpanded) {
+      setIsChatHistoryExpanded(false);
+      setActivePanel(null);
+    } else {
+      handleShowChatHistory();
+    }
+  }, [activePanel, isChatHistoryExpanded, handleShowChatHistory]);
 
   const thread = useStream<{
     messages: Message[];
@@ -478,22 +541,177 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
-      {/* Left Panel - Report History (Always present) */}
-      <ReportHistoryList
-        onSelectReport={loadReport}
-        onDeleteReport={handleDeleteReport}
-        isExpanded={isHistoryExpanded}
-        onToggle={() => setIsHistoryExpanded(!isHistoryExpanded)}
-      />
+      {/* Left Panel - 动态侧边栏 */}
+      <div className={`${(isHistoryExpanded || isChatHistoryExpanded) ? 'w-80' : 'w-12'} bg-neutral-900 border-r border-neutral-700 flex flex-col transition-all duration-300 ease-in-out overflow-hidden`}>
+        {/* Header */}
+        <div className="relative p-3 border-b border-neutral-700">
+          {/* 收起状态的按钮组（始终存在） */}
+          <div className={`absolute inset-0 flex flex-col items-center justify-center gap-2 transition-opacity duration-300 z-10 ${
+            !(isHistoryExpanded || isChatHistoryExpanded) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}>
+            <button
+              onClick={handleToggleReports}
+              className="p-2 hover:bg-neutral-700 rounded text-neutral-400 hover:text-neutral-200"
+              title="展开研究报告"
+            >
+              <FileText size={16} />
+            </button>
+            <button
+              onClick={handleToggleChatHistory}
+              className="p-2 hover:bg-neutral-700 rounded text-neutral-400 hover:text-neutral-200"
+              title="查看聊天记录"
+            >
+              <MessageCircle size={16} />
+            </button>
+          </div>
+          
+          {/* 展开状态的内容 */}
+          <div className={`transition-opacity duration-300 ${
+            (isHistoryExpanded || isChatHistoryExpanded) ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold text-neutral-100 whitespace-nowrap">
+                {activePanel === 'chats' ? '聊天记录' : '历史报告'}
+              </h2>
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => {
+                    if (activePanel === 'chats') {
+                      // TODO: 刷新聊天记录列表
+                    } else {
+                      loadReports();
+                    }
+                  }}
+                  className="p-1 hover:bg-neutral-700 rounded text-neutral-400 hover:text-neutral-200"
+                  disabled={reportsLoading}
+                  title="刷新列表"
+                >
+                  {activePanel === 'chats' ? <MessageCircle size={16} /> : <FileText size={16} />}
+                </button>
+                <button
+                  onClick={() => {
+                    if (activePanel === 'chats') {
+                      handleToggleChatHistory();
+                    } else {
+                      handleToggleReports();
+                    }
+                  }}
+                  className="p-1 hover:bg-neutral-700 rounded text-neutral-400 hover:text-neutral-200"
+                  title="收起侧边栏"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              </div>
+            </div>
+            <p className="text-sm text-neutral-400 whitespace-nowrap">
+              {activePanel === 'chats' 
+                ? '共 0 个对话' 
+                : reportsLoading 
+                  ? '加载中...' 
+                  : `共 ${reports.length} 个报告`
+              }
+            </p>
+          </div>
+        </div>
+
+        {/* Content - 条件显示不同的内容 */}
+        <div className={`flex-1 overflow-y-auto transition-opacity duration-300 ${
+          (isHistoryExpanded || isChatHistoryExpanded) ? 'opacity-100' : 'opacity-0'
+        }`}>
+          {activePanel === 'reports' && isHistoryExpanded && (
+            <>
+              {reportsLoading && (
+                <div className="p-4 text-center text-neutral-400">
+                  加载中...
+                </div>
+              )}
+              {!reportsLoading && reports.length === 0 && (
+                <div className="p-4 text-center text-neutral-500">
+                  <FileText size={48} className="mx-auto mb-2 opacity-50" />
+                  <p>暂无历史报告</p>
+                  <p className="text-sm mt-1">完成研究后报告会自动保存在这里</p>
+                </div>
+              )}
+              {!reportsLoading && reports.length > 0 && (
+                <div className="space-y-1 p-2">
+                  {reports.map((report) => (
+                    <div
+                      key={report.id}
+                      onClick={() => loadReport(report.id)}
+                      className="group p-3 bg-neutral-800 hover:bg-neutral-700 rounded-lg cursor-pointer transition-colors border border-transparent hover:border-neutral-600"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-medium text-neutral-200 text-sm whitespace-nowrap overflow-hidden text-ellipsis">
+                            {report.title || '无标题报告'}
+                          </h3>
+                          <p className="text-xs text-neutral-400 mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
+                            {report.query || ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between mt-2 text-xs text-neutral-500">
+                        <div className="flex items-center space-x-3 overflow-hidden flex-1 mr-2">
+                          <span className="flex items-center whitespace-nowrap">
+                            <Clock size={10} className="mr-1 flex-shrink-0" />
+                            <span className="overflow-hidden text-ellipsis">
+                              {new Date(report.created_at).toLocaleString('zh-CN', {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </span>
+                          </span>
+                          {report.word_count > 0 && (
+                            <span className="flex items-center whitespace-nowrap">
+                              <BarChart3 size={10} className="mr-1 flex-shrink-0" />
+                              <span>{report.word_count}字</span>
+                            </span>
+                          )}
+                        </div>
+                        <span className={`px-2 py-1 rounded text-xs whitespace-nowrap flex-shrink-0 ${
+                          report.status === 'completed' 
+                            ? 'bg-green-600/20 text-green-400' 
+                            : 'bg-yellow-600/20 text-yellow-400'
+                        }`}>
+                          {report.status === 'completed' ? '已完成' : '草稿'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          {activePanel === 'chats' && isChatHistoryExpanded && (
+            <div className="p-4 text-center text-neutral-500">
+              <MessageCircle size={48} className="mx-auto mb-2 opacity-50" />
+              <p>暂无聊天记录</p>
+              <p className="text-sm mt-1">开始对话后记录会保存在这里</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className={`p-3 border-t border-neutral-700 text-xs text-neutral-500 text-center transition-opacity duration-300 ${
+          (isHistoryExpanded || isChatHistoryExpanded) ? 'opacity-100' : 'opacity-0'
+        }`}>
+          <div className="whitespace-nowrap">
+            {activePanel === 'chats' ? '点击对话可恢复历史记录' : '点击报告可查看详情'}
+          </div>
+        </div>
+      </div>
       
       {/* Middle Panel - Chat Interface */}
       <main className={`flex flex-col overflow-hidden ${
         showReport 
-          ? isHistoryExpanded 
-            ? "flex-1" // 侧边栏展开 + 报告显示：填充剩余空间
+          ? (isHistoryExpanded || isChatHistoryExpanded)
+            ? "flex-1" // 任一侧边栏展开 + 报告显示：填充剩余空间
             : "flex-1" // 侧边栏收起 + 报告显示：填充剩余空间
-          : isHistoryExpanded
-            ? "flex-1 max-w-4xl mx-auto" // 侧边栏展开 + 无报告：居中限制宽度
+          : (isHistoryExpanded || isChatHistoryExpanded)
+            ? "flex-1 max-w-4xl mx-auto" // 任一侧边栏展开 + 无报告：居中限制宽度
             : "flex-1 max-w-4xl mx-auto"  // 侧边栏收起 + 无报告：居中限制宽度
       }`}>
         {/* Header */}

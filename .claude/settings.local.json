@@ -19,12 +19,14 @@
       "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
       "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
       "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
-      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)"
+      "Read(D:\\Workspace\\open_deep_research\\src\\open_deep_research/**)",
+      "Bash(start http://localhost:5176)"
     ],
     "deny": [],
     "ask": [],
     "additionalDirectories": [
-      "D:\\Workspace\\open_deep_research"
+      "D:\\Workspace\\open_deep_research",
+      "D:\\Workspace\\tchk-oa-mcp-client"
     ]
   }
 }
